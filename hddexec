@@ -935,7 +935,7 @@ PY
 }
 
 function sendmymail {
-        if { [[ $option == "--daily" && $errorfound -eq 1 ]] || [[ $option == "--weekly" ]] || [[ $option == "--sendmail" ]]; };
+        if { [[ $option == "--daily" && $errorfound -eq 1 ]] || [[ $option == "--weekly" ]] || [[ $option == "--sendmail" ]]; }
         then
                 logger -t hddmail "Sending SMART notification email"
                 sendmail "$dest" < "$BASE_DIR/hddmailsend.txt"
