@@ -29,7 +29,16 @@ status_store_path="/bin/hddmailFiles/hddsmart_status.json"
 status_store_dir="$(dirname "$status_store_path")"
 if [[ ! -d $status_store_dir ]]
 then
-        mkdir -p "$status_store_dir"
+        if ! mkdir -p "$status_store_dir"
+        then
+                echo "******************************************" >&2
+                echo "HDDMAIL v.1.2 by admiral-vulcan  error" >&2
+                echo "******************************************" >&2
+                echo "" >&2
+                echo "Failed to create SMART status cache directory: $status_store_dir" >&2
+                echo "Please ensure the path is writable and try again." >&2
+                exit 1
+        fi
 fi
 if [[ -f $status_store_path ]]
 then
