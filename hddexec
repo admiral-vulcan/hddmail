@@ -222,7 +222,7 @@ function helpmode {
 	echo "	--status	for program to show hdd full health status"	
 	echo "	--summary	for program to show hdd summary"	
 	echo ""
-	echo "Hinweis: Fehler werden nur gemeldet, wenn neue oder wachsende SMART-Probleme festgestellt wurden."
+	echo "Note: Errors are only reported if new or growing SMART issues have been detected."
 }
 
 function configmode {
