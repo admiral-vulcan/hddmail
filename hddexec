@@ -1,0 +1,654 @@
+#!/bin/bash
+IFS=$'\n'
+
+: '	HDDMAIL v.1.2 by admiral-vulcan
+ 2020
+
+	Changelog:
+	1.1	FIXED	changed crontab.
+	1.2	FIXED	"Error: No error" - error
+	1.2	ADDED	tab completion in bash
+	
+	see above in function writeHddmail
+
+	todo:
+	add version check for updates
+	
+	
+'
+
+clear
+
+version="1.2"
+errorfound=0
+option=$1
+option=${option,,}
+opttwo=$2
+
+function chkoption {
+	if [[ ! $opttwo == "" ]]
+	then
+		echo ""
+		echo "******************************************"
+		echo "HDDMAIL v.1.2 by admiral-vulcan
+  error"
+		echo "******************************************"
+		echo ""
+		echo "Please pass only one option at a time. Exiting."
+		exit 1
+	fi
+
+
+	if [[ ! ($option == "" || $option == "-h" || $option == "--help" || $option == "--daily" || $option == "--weekly" || $option == "--config" || $option == "--status" || $option == "--summary" || $option == "--sendmail" || $option == "--viewcfg") ]]
+	then
+		echo "******************************************"
+		echo "HDDMAIL v.1.2 by admiral-vulcan
+  error"
+		echo "******************************************"
+		echo ""
+		echo "Option not recognized. Exiting."
+		exit 1
+	fi
+
+	if [[ $option == "-h" ]]
+	then
+		option="--help"
+	fi
+}
+
+function chkhome {
+	if [ ! -e /bin/hddmailFiles/hddexec ] #installation executes HERE
+	then
+		echo ""
+		echo "******************************************"
+		echo "HDDMAIL v.1.2 by admiral-vulcan
+  auto install"
+		echo "******************************************"
+		echo ""
+		writeHddmail
+		date > /bin/hddmailFiles/install.log
+		echo "Created program directory /bin/hddmailFiles/ and install.log" >> /bin/hddmailFiles/install.log
+		mv "$(readlink -f $0)" /bin/hddmailFiles/hddexec >> /bin/hddmailFiles/install.log
+		echo "Moved program file hddmail to program directory." >> /bin/hddmailFiles/install.log
+		
+		if [ -e /bin/hddmail ]
+		then
+			rm /bin/hddmail
+		fi
+		
+		ln -s /bin/hddmailFiles/hddmail /bin/hddmail >> /bin/hddmailFiles/install.log
+		
+		chmod -R 6777 /bin/hddmailFiles
+		
+		echo "Created hddmail symlink in /bin/" >> /bin/hddmailFiles/install.log
+		
+		complete -W '-h --help --sendmail --weekly --daily --config --viewcfg --status --summary' hddmail
+		echo "Created tab completion entry via complete" >> /bin/hddmailFiles/install.log
+		
+		echo "HDDMAIL has been installed." >> /bin/hddmailFiles/install.log
+		echo "HDDMAIL has been installed."
+		echo "An install log has been written in /bin/hddmailFiles/install.log"
+		echo ""
+		echo "HDDMAIL needs to be configured."
+		read -r -p "Do you wish to configure it now? [Y/n]" response
+		response=${response,,} # tolower
+		if [[ $response =~ ^(yes|y| ) ]] || [[ -z $response ]]
+		then
+			/bin/hddmailFiles/hddmail --config
+		else
+			echo ""
+			echo "You chose not to configure HDDMAIL."
+			echo "Enter hddmail --config for program configuration."
+			echo "Enter hddmail --help for more info."
+			echo  "Exiting."
+			exit 0
+		fi
+		exit 0
+	fi
+}
+
+function chkln {
+	if [ ! -e /bin/hddmail ]
+	then
+		ln -s /bin/hddmailFiles/hddmail /bin/hddmail > /dev/null
+	fi
+}
+
+function chkconfig {
+	miscfg=0
+	mailerr=0
+	hdderr=0
+	if [ ! -e /bin/hddmailFiles/hddmail.cfg ]
+	then
+	miscfg=1
+	fi
+	nummail=$(grep -c "@" /bin/hddmailFiles/hddmail.cfg)
+	#numhdd=$(grep -c "/dev/sd" /bin/hddmailFiles/hddmail.cfg) #old method not working with /dev/disk/by-id
+	numhdd=$(sed "4q;d" /bin/hddmailFiles/hddmail.cfg | cut -c19-)
+	#cfgver=$(sed "0q;d" /bin/hddmailFiles/hddmail.cfg | cut -c19-)
+	if [[ ! $nummail -eq 2 ]] 
+	then
+		mailerr=1
+	fi
+	
+	if [[ ! $numhdd -ge 1 ]] 
+	then
+		hdderr=1
+	fi
+	errcount=$((miscfg+mailerr+hdderr))
+	if [[ $errcount -gt 0 ]]
+	then
+	clear
+		echo ""
+		echo "******************************************"
+		echo "HDDMAIL v.1.2 by admiral-vulcan
+  error"
+		echo "******************************************"
+		echo ""
+
+	
+		if [[ $miscfg -gt 0 ]]
+		then
+			echo "Configfile hddmail.cfg is missing. Enter hddmail --help for more info."
+			echo "Exiting."
+			exit 1
+		fi
+		
+		if [[ $mailerr -gt 0 ]]
+		then
+			echo "Could not find valid E-Mail addresses in the config file."
+		fi
+		
+		if [[ $hdderr -gt 0 ]]
+		then
+			echo "No HDDs specified in configfile."
+		fi
+		
+		echo "Exiting"
+		exit 1
+	fi	
+}
+
+function readconfig {
+	tomailline=$(cat /bin/hddmailFiles/hddmail.cfg | grep "To")
+	frommailline=$(cat /bin/hddmailFiles/hddmail.cfg | grep "From")
+	dest=$(cat /bin/hddmailFiles/hddmail.cfg | grep "To" | cut -c5-)
+	# got numhdd from chkconfig
+}
+
+function helpmode {
+	echo ""
+	echo "******************************************"
+	echo "HDDMAIL v.1.2 by admiral-vulcan
+  help"
+	echo "******************************************"
+	echo ""
+	echo "Options: "
+	echo "	-h, --help	for this info"
+	echo "	--sendmail	for status report per mail"
+	echo "	--weekly	designed for scheduler: send weekly mail report"
+	echo "	--daily 	designed for scheduler: send daily mail only if errors were found"
+	echo "	--config	for program configuration"
+	echo "	--viewcfg	for program to print config file"
+	echo "	--status	for program to show hdd full health status"	
+	echo "	--summary	for program to show hdd summary"	
+}
+
+function configmode {
+	echo ""
+	echo "******************************************"
+	echo "HDDMAIL v.1.2 by admiral-vulcan
+  configuration"
+	echo "******************************************"
+	echo ""
+	echo "Checking dependencies, please wait."
+	
+	
+	hddapp=$(dpkg-query -W --showformat='${Status}\n' smartmontools | grep "install ok installed")
+	if [ "" == "$hddapp" ]
+	then
+		echo "Smartmontools are not installed. This program will not work without them."
+		read -r -p "Do you wish to install it? No will abort this installation. [Y/n]" response
+		response=${response,,} # tolower
+		if [[ $response =~ ^(yes|y| ) ]] || [[ -z $response ]]
+		then
+			apt-get -y install smartmontools
+		else
+			echo "You chose not to install smartmontools. Exiting."
+			exit 0
+		fi
+	fi
+	
+	mailapp=$(dpkg-query -W --showformat='${Status}\n' msmtp | grep "install ok installed")
+	if [ "" == "$mailapp" ]
+	then
+		echo "The mail program msmtp is not installed." 
+		echo "While this program CAN also work with different mail programs" 
+		echo "that are compatible with the sendmail - syntax," 
+		echo "it is tested with msmtp only and therefore highly recommended to use."
+		read -r -p "Do you wish to install it? [Y/n]" response
+		response=${response,,} # tolower
+		if [[ $response =~ ^(yes|y| ) ]] || [[ -z $response ]]
+		then
+			apt-get -y update && apt-get upgrade -V
+			apt-get -y install msmtp msmtp-mta mailutils
+			mv /usr/sbin/sendmail /usr/sbin/sendmail.bak
+			ln -s /usr/bin/msmtp /usr/sbin/sendmail
+			ln -s /usr/bin/msmtp /bin/sendmail
+			egmailacc
+			echo "The program msmtp has been installed"
+			echo "and an example-config named \"gmx-some-name\""
+			echo "written in  \"/etc/msmtprc\". Change it accordingly."
+		else
+			echo "You chose not to install msmtp. Good luck."
+		fi
+	fi
+	
+	
+	echo "Version: $version" > /bin/hddmailFiles/hddmail.cfg
+	echo ""
+	echo ""
+	echo "Done checking dependencies."
+	echo ""
+	echo "Enter destination E-Mail for the TO state"
+	read dest
+	echo ""
+	echo "Enter source E-Mail for the FROM state"
+	echo "(This should match your mail-program-settings)"
+	read source
+	echo ""
+	echo "To: $dest" >> /bin/hddmailFiles/hddmail.cfg
+	echo "From: $source" >> /bin/hddmailFiles/hddmail.cfg
+	cat /bin/hddmailFiles/hddmail.cfg | grep "To"
+	cat /bin/hddmailFiles/hddmail.cfg | grep "From"
+	echo "Addresses saved"	
+	echo ""
+	echo "Scanning for drives . . ."
+	echo ""
+	gethdds
+	numlsblk=$(grep -c "sd" /bin/hddmailFiles/listlsblk.txt)
+	nummdadm=$(grep -c "sd" /bin/hddmailFiles/listmdadm.txt)
+	echo "Found a total of $numlsblk drives on your system of which $nummdadm are in a RAID."
+	echo ""
+	echo "Do you wish to observe all drives [A] or the ones in your RAID only [r]?"
+	echo ""
+	echo "Notes:" 
+	echo "The /dev/sd* mapping may vary. Observing all drives is recomended."
+	echo "If you know that your non-RAID drives do not support SMART, choose [r]"
+	echo ""
+	echo "HDDMAIL is compatible with drive id. You can change the drives"
+	echo "to /dev/disk/by-id/*your-drive* in /bin/hddmailFiles/hddmail.cfg later."
+	echo ""
+	read -r -p "Please choose: [A/r]" response
+	response=${response,,} # tolower
+	if [[ $response =~ ^(all|a| ) ]] || [[ -z $response ]]
+	then
+		#use lsblklist
+		echo "Number of drives: $numlsblk" >> /bin/hddmailFiles/hddmail.cfg
+		i=1
+		while [[ $i -le $numlsblk ]]
+		do
+			echo "writing /dev/$(sed "${i}q;d" /bin/hddmailFiles/listlsblk.txt) to config-file."
+			echo "/dev/$(sed "${i}q;d" /bin/hddmailFiles/listlsblk.txt)" >> /bin/hddmailFiles/hddmail.cfg
+			i=$((i+1))
+		done
+	else
+		#use mdadmlist
+		echo "Number of drives: $nummdadm" >> /bin/hddmailFiles/hddmail.cfg
+		i=1
+		while [[ $i -le $nummdadm ]]
+		do
+			echo "writing /dev/$(sed "${i}q;d" /bin/hddmailFiles/listmdadm.txt) to config-file."
+			echo "/dev/$(sed "${i}q;d" /bin/hddmailFiles/listmdadm.txt)" >> /bin/hddmailFiles/hddmail.cfg
+			i=$((i+1))
+		done
+	fi	
+	
+	read -r -p "Do you want the scheduler to be set into crontab? [Y/n]" response
+	response=${response,,} # tolower
+	if [[ $response =~ ^(yes|y| ) ]] || [[ -z $response ]]
+	then
+		if  crontab -l | grep -q 'hddmail'
+		then 
+			echo "Scheduler already set." 
+		else
+			(crontab -l 2>/dev/null; echo "0 4 * * 7   /bin/hddmailFiles/hddmail --weekly > /dev/null 2>&1") | crontab -
+			(crontab -l 2>/dev/null; echo "0 4 * * 1-6 /bin/hddmailFiles/hddmail --daily  > /dev/null 2>&1") | crontab -
+			echo 'The scheduler is set to daily silent scans at 4 AM and a weekly status report every Sunday.'
+			echo 'You can change this by editing your contab via \"crontab -e\".'
+		fi
+	else
+		echo "You can manually set it via crontab -e."
+	fi
+	
+	chmod -R 6777 /bin/hddmailFiles
+	
+	echo ""
+
+	echo ""
+	echo "Exiting configuration."
+}
+
+function viewcfgmode {
+	if [ ! -e /bin/hddmailFiles/hddmail.cfg ]
+	then
+		echo ""
+		echo "******************************************"
+		echo "HDDMAIL v.1.2 by admiral-vulcan
+  error"
+		echo "******************************************"
+		echo ""
+		echo "No config file found. Please run config. Enter hddmail --help for more info."
+		echo "Exiting."
+		exit 1
+	else
+		echo ""
+		echo "******************************************"
+		echo "HDDMAIL v.1.2 by admiral-vulcan
+  print config"
+		echo "******************************************"
+		echo ""
+
+		cat /bin/hddmailFiles/hddmail.cfg
+		echo ""
+		echo "Exiting."
+		exit 0
+		
+	fi
+}
+
+function modejumper {
+	if [[ $option == "--help" ]]
+	then
+		helpmode
+		exit 0
+	elif [[ $option == "--config" ]]
+	then
+		configmode
+		exit 0
+	elif [[ $option == "--viewcfg" ]]
+	then
+		viewcfgmode
+		exit 0
+	fi
+}
+
+function domagic {
+	echo ""
+	echo "******************************************"
+	echo "HDDMAIL v.1.2 by admiral-vulcan
+"
+	echo "******************************************"
+	echo ""
+	echo "Reading SMART values. Please wait."
+	echo ""
+	
+	echo "" > /bin/hddmailFiles/hddsummary.txt
+
+	COUNTER=0
+	while [[  $COUNTER -lt $numhdd ]]
+	do
+		currenthdd="$(sed "$((COUNTER+5))q;d" /bin/hddmailFiles/hddmail.cfg)"
+		echo "Summary of $currenthdd:" >> /bin/hddmailFiles/hddsummary.txt
+		/usr/sbin/smartctl -a $currenthdd | grep -E "Logged" >> /bin/hddmailFiles/hddsummary.txt
+		echo "" >> /bin/hddmailFiles/hddsummary.txt
+		let COUNTER=COUNTER+1
+	done
+
+	echo "" >> /bin/hddmailFiles/hddsummary.txt
+
+	echo "Short report stored in /bin/hddmailFiles/hddsummary.txt"
+	
+	echo "" > /bin/hddmailFiles/hddstatus.txt
+	
+	COUNTER=0
+	while [[ $COUNTER -lt $numhdd ]]
+	do
+		currenthdd="$(sed "$((COUNTER+5))q;d" /bin/hddmailFiles/hddmail.cfg)"
+		echo "Status of $currenthdd:" >> /bin/hddmailFiles/hddstatus.txt
+		echo "" >> /bin/hddmailFiles/hddstatus.txt
+		/usr/sbin/smartctl -a $currenthdd | grep -E "Offline|rror|fail" >> /bin/hddmailFiles/hddstatus.txt
+		echo "" >> /bin/hddmailFiles/hddstatus.txt
+		echo "" >> /bin/hddmailFiles/hddstatus.txt
+		let COUNTER=COUNTER+1
+	done
+	
+	echo "Full report stored in /bin/hddmailFiles/hddstatus.txt"
+	echo ""
+}
+
+function makemail {
+
+	echo "$tomailline" > /bin/hddmailFiles/hddmailhead.txt
+	echo "$frommailline" >> /bin/hddmailFiles/hddmailhead.txt
+	if [[ $(grep -c "No Errors Logged" /bin/hddmailFiles/hddstatus.txt) == $numhdd ]]
+	then
+		echo "Subject: HDD SMART Status Report" >> /bin/hddmailFiles/hddmailhead.txt
+	else
+	errorfound=1
+		echo "Subject: HDD SMART ERROR DETECTED" >> /bin/hddmailFiles/hddmailhead.txt
+	fi
+	echo "Content-Type: text/html" >> /bin/hddmailFiles/hddmailhead.txt
+	echo "MIME-Version: 1.0" >> /bin/hddmailFiles/hddmailhead.txt
+	echo "" >> /bin/hddmailFiles/hddmailhead.txt
+
+	echo "<html>" >> /bin/hddmailFiles/hddmailhead.txt
+	
+	echo "<style>" >> /bin/hddmailFiles/hddmailhead.txt
+	echo "html *" >> /bin/hddmailFiles/hddmailhead.txt
+	echo "{" >> /bin/hddmailFiles/hddmailhead.txt
+	echo "   font-size: 1em !important;" >> /bin/hddmailFiles/hddmailhead.txt
+	echo "   background-color: powderblue; !important;" >> /bin/hddmailFiles/hddmailhead.txt
+	echo "   font-family: Courier, monospace !important;" >> /bin/hddmailFiles/hddmailhead.txt
+	echo "}" >> /bin/hddmailFiles/hddmailhead.txt
+	#echo "body {background-color: powderblue;}" >> /bin/hddmailFiles/hddmailhead.txt
+	echo "</style>" >> /bin/hddmailFiles/hddmailhead.txt
+	echo "<body><table style=\"font-family:Courier, monospace\">" >> /bin/hddmailFiles/hddmailhead.txt
+	
+	#insert style here
+	
+	echo "******************************************" > /bin/hddmailFiles/hddmail.txt
+	echo "HDDMAIL v.1.2 by admiral-vulcan
+" >> /bin/hddmailFiles/hddmail.txt
+	echo "******************************************" >> /bin/hddmailFiles/hddmail.txt
+	echo "" >> /bin/hddmailFiles/hddmail.txt
+	date  >> /bin/hddmailFiles/hddmail.txt
+	echo "" >> /bin/hddmailFiles/hddmail.txt
+	echo "" >> /bin/hddmailFiles/hddmail.txt
+	
+	if [[ $option == "--daily" ]] 
+	then
+		echo "Report triggert by auto daily event." >> /bin/hddmailFiles/hddmail.txt
+		echo "" >> /bin/hddmailFiles/hddmail.txt
+		echo "" >> /bin/hddmailFiles/hddmail.txt
+	elif [[ $option == "--weekly" ]] 
+	then
+		echo "Report triggert by auto weekly event." >> /bin/hddmailFiles/hddmail.txt
+		echo "" >> /bin/hddmailFiles/hddmail.txt
+		echo "" >> /bin/hddmailFiles/hddmail.txt
+	elif [[ $option == "--sendmail" ]]
+	then
+		echo "Report triggert by manual sendmail event." >> /bin/hddmailFiles/hddmail.txt
+		echo "" >> /bin/hddmailFiles/hddmail.txt
+		echo "" >> /bin/hddmailFiles/hddmail.txt
+	fi
+	
+	cat /bin/hddmailFiles/hddsummary.txt >> /bin/hddmailFiles/hddmail.txt
+
+	echo "" >> /bin/hddmailFiles/hddmail.txt
+	echo "" >> /bin/hddmailFiles/hddmail.txt
+
+	cat /bin/hddmailFiles/hddstatus.txt >> /bin/hddmailFiles/hddmail.txt
+	
+	sed 's/.*/&<br>/' /bin/hddmailFiles/hddmail.txt > /bin/hddmailFiles/hddtmp.txt
+	cat /bin/hddmailFiles/hddmailhead.txt > /bin/hddmailFiles/hddmailsend.txt
+	cat /bin/hddmailFiles/hddtmp.txt >> /bin/hddmailFiles/hddmailsend.txt
+	echo "</table></body></html>" >> /bin/hddmailFiles/hddmailsend.txt
+	
+	echo "Readable mail text has been written in /bin/hddmailFiles/hddmail.txt"
+	echo "HTML mail text has been written in /bin/hddmailFiles/hddmailsend.txt"
+}
+
+function sendmymail {
+	if ([[ $option == "--daily" ]] && [[ $errorfound == 1 ]]) || [[ $option == "--weekly" ]] || [[ $option == "--sendmail" ]]
+	then
+		sendmail $dest < /bin/hddmailFiles/hddmailsend.txt
+
+		echo "E-Mail has been send."
+	else
+		if [[ $option == "--status" ]]
+		then
+			cat /bin/hddmailFiles/hddstatus.txt
+			echo ""
+			echo ""
+			echo ""
+			cat /bin/hddmailFiles/hddsummary.txt
+		elif [[ $option == "--summary" ]]
+		then
+			cat /bin/hddmailFiles/hddsummary.txt
+		else
+			echo "No E-Mail has been send, no info displayed."
+			echo "Enter hddmail --help for more info."
+		fi
+	fi
+	echo "Exiting."
+	exit 0
+
+}
+
+function egmailacc {
+	echo "" >> /etc/msmtprc
+	echo "#Example config by HDDMAIL starts here." >> /etc/msmtprc
+	echo "#" >> /etc/msmtprc
+	echo "## gmx Account" >> /etc/msmtprc
+	echo "#account gmx-some-name" >> /etc/msmtprc
+	echo "#host mail.gmx.net" >> /etc/msmtprc
+	echo "#port 587" >> /etc/msmtprc
+	echo "#from your.user@gmx.de" >> /etc/msmtprc
+	echo "#tls on" >> /etc/msmtprc
+	echo "#tls_starttls on" >> /etc/msmtprc
+	echo "#tls_trust_file /etc/ssl/certs/gmx-smtp.crt" >> /etc/msmtprc
+	echo "#auth on" >> /etc/msmtprc
+	echo "#user your.user@gmx.de" >> /etc/msmtprc
+	echo "##password - some save method to transmit password" >> /etc/msmtprc
+	echo "#passwordeval gpg --no-tty -q -d ~/.msmtp-gmx.gpg" >> /etc/msmtprc
+	echo "##password - OR some unsave method to transmit password" >> /etc/msmtprc
+	echo "#password pAssW0Rd123" >> /etc/msmtprc
+	echo "#syslog LOG_MAIL" >> /etc/msmtprc
+	echo "#" >> /etc/msmtprc
+	echo "#account default : gmx-some-name" >> /etc/msmtprc
+	echo "#" >> /etc/msmtprc
+}
+
+function gethdds {
+	#scanning with lsblk
+	all=0
+	i=1
+	overwrote=0
+	first=0
+	while [ $all == 0 ]
+	do
+		hdd="$(lsblk | grep "sd" | cut -c1-3 | grep "sd" | tr '\n' ' '| cut -d' ' -f $i )"
+		if [[ $first == 0 ]] && [[ ${hdd} == *"sd"* ]]
+		then
+			first=1
+		elif [[ $first == 1 ]] && [[ ${hdd} == *"sd"* ]]
+		then
+			if [[ $overwrote == 0 ]]
+			then
+				echo $hdd > /bin/hddmailFiles/listlsblk.txt
+				overwrote=1
+			else
+				echo $hdd >> /bin/hddmailFiles/listlsblk.txt
+			fi
+			i=$((i+1))
+		elif [[ $first == 1 ]] &&  [[ ${hdd} != *"sd"* ]]
+		then
+			all=1
+		else
+			i=$((i+1))
+			if [[ $i -gt 20 ]]
+			then
+				all=2
+				echo "Error: No drives could be found."
+			fi
+		fi
+	done
+
+	#scanning with mdadm
+	all=0
+	i=1
+	overwrote=0
+	first=0
+	while [ $all == 0 ]
+	do
+		hdd="$(cat /proc/mdstat | grep "sd" | cut -d' ' -f $i | cut -c1-3 | grep "sd")"
+		if [[ $first == 0 ]] && [[ ${hdd} == *"sd"* ]]
+		then
+			first=1
+		elif [[ $first == 1 ]] && [[ ${hdd} == *"sd"* ]]
+		then
+			if [[ $overwrote == 0 ]]
+			then
+				echo $hdd > /bin/hddmailFiles/listmdadm.txt
+				overwrote=1
+			else
+				echo $hdd >> /bin/hddmailFiles/listmdadm.txt
+			fi
+			i=$((i+1))
+		elif [[ $first == 1 ]] &&  [[ ${hdd} != *"sd"* ]]
+		then
+			all=1
+		else
+			i=$((i+1))
+			if [[ $i -gt 20 ]]
+			then
+				all=2
+				echo "Error: No drives could be found."
+			fi
+		fi
+	done
+}
+
+
+function writeHddmail {
+
+		mkdir /bin/hddmailFiles/ > /dev/null
+echo \#\!/bin/bash > /bin/hddmailFiles/hddmail
+echo "IFS=$'\n'" >> /bin/hddmailFiles/hddmail
+echo "" >> /bin/hddmailFiles/hddmail
+echo ": '	HDDMAIL v.1.2 by admiral-vulcan
+ 2020" >> /bin/hddmailFiles/hddmail
+echo "" >> /bin/hddmailFiles/hddmail
+echo "	Changelog:" >> /bin/hddmailFiles/hddmail
+echo "	1.1	FIXED	changed crontab." >> /bin/hddmailFiles/hddmail
+echo "	1.2	FIXED	\"Error: No error\" - error" >> /bin/hddmailFiles/hddmail
+echo "	1.2	ADDED	tab completion in bash" >> /bin/hddmailFiles/hddmail
+echo "" >> /bin/hddmailFiles/hddmail
+echo "'" >> /bin/hddmailFiles/hddmail
+echo "" >> /bin/hddmailFiles/hddmail
+echo "dupe_script=\$(ps -ef | grep \"hddexec\" | grep -v grep | wc -l)" >> /bin/hddmailFiles/hddmail
+echo "" >> /bin/hddmailFiles/hddmail
+echo "if [ \${dupe_script} -gt 3 ]" >> /bin/hddmailFiles/hddmail
+echo "then" >> /bin/hddmailFiles/hddmail
+echo "    echo -e \"HDDMAIL läuft bereits.\"" >> /bin/hddmailFiles/hddmail
+echo "    exit 0" >> /bin/hddmailFiles/hddmail
+echo "else" >> /bin/hddmailFiles/hddmail
+echo "	/bin/hddmailFiles/hddexec \"\$@\"" >> /bin/hddmailFiles/hddmail
+echo "	exit 0" >> /bin/hddmailFiles/hddmail
+echo "fi" >> /bin/hddmailFiles/hddmail
+chmod -R 6777 /bin/hddmailFiles/hddmail
+
+}
+
+
+
+chkhome
+chkln
+chkoption
+modejumper
+chkconfig
+readconfig
+domagic
+makemail
+sendmymail
