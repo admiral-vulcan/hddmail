@@ -1,7 +1,7 @@
 #!/bin/bash
 IFS=$'\n'
 
-: '	HDDMAIL v.1.2 by admiral-vulcan
+: '	HDDMAIL v.1.3 by admiral-vulcan
  2020
 
 	Changelog:
@@ -75,7 +75,7 @@ function chkoption {
 	then
 		echo ""
 		echo "******************************************"
-		echo "HDDMAIL v.1.2 by admiral-vulcan
+		echo "HDDMAIL v.1.3 by admiral-vulcan
   error"
 		echo "******************************************"
 		echo ""
@@ -87,7 +87,7 @@ function chkoption {
 	if [[ ! ($option == "" || $option == "-h" || $option == "--help" || $option == "--daily" || $option == "--weekly" || $option == "--config" || $option == "--status" || $option == "--summary" || $option == "--sendmail" || $option == "--viewcfg") ]]
 	then
 		echo "******************************************"
-		echo "HDDMAIL v.1.2 by admiral-vulcan
+		echo "HDDMAIL v.1.3 by admiral-vulcan
   error"
 		echo "******************************************"
 		echo ""
@@ -106,7 +106,7 @@ function chkhome {
 	then
 		echo ""
 		echo "******************************************"
-		echo "HDDMAIL v.1.2 by admiral-vulcan
+		echo "HDDMAIL v.1.3 by admiral-vulcan
   auto install"
 		echo "******************************************"
 		echo ""
@@ -199,7 +199,7 @@ function chkconfig {
 	clear
 		echo ""
 		echo "******************************************"
-		echo "HDDMAIL v.1.2 by admiral-vulcan
+		echo "HDDMAIL v.1.3 by admiral-vulcan
   error"
 		echo "******************************************"
 		echo ""
@@ -237,7 +237,7 @@ function readconfig {
 function helpmode {
 	echo ""
 	echo "******************************************"
-	echo "HDDMAIL v.1.2 by admiral-vulcan
+	echo "HDDMAIL v.1.3 by admiral-vulcan
   help"
 	echo "******************************************"
 	echo ""
@@ -258,7 +258,7 @@ function helpmode {
 function configmode {
 	echo ""
 	echo "******************************************"
-	echo "HDDMAIL v.1.2 by admiral-vulcan
+	echo "HDDMAIL v.1.3 by admiral-vulcan
   configuration"
 	echo "******************************************"
 	echo ""
@@ -403,7 +403,7 @@ function viewcfgmode {
         then
                 echo ""
 		echo "******************************************"
-		echo "HDDMAIL v.1.2 by admiral-vulcan
+		echo "HDDMAIL v.1.3 by admiral-vulcan
   error"
 		echo "******************************************"
 		echo ""
@@ -413,7 +413,7 @@ function viewcfgmode {
 	else
 		echo ""
 		echo "******************************************"
-		echo "HDDMAIL v.1.2 by admiral-vulcan
+		echo "HDDMAIL v.1.3 by admiral-vulcan
   print config"
 		echo "******************************************"
 		echo ""
@@ -455,7 +455,7 @@ function modejumper {
 function domagic {
         echo ""
         echo "******************************************"
-        echo "HDDMAIL v.1.2 by admiral-vulcan"
+        echo "HDDMAIL v.1.3 by admiral-vulcan"
         echo "******************************************"
         echo ""
         echo "Reading SMART values. Please wait."
@@ -811,7 +811,7 @@ function makemail {
         echo "<body>" >> "$BASE_DIR/hddmailhead.txt"
 
         echo "******************************************" > "$BASE_DIR/hddmail.txt"
-        echo "HDDMAIL v.1.2 by admiral-vulcan" >> "$BASE_DIR/hddmail.txt"
+        echo "HDDMAIL v.1.3 by admiral-vulcan" >> "$BASE_DIR/hddmail.txt"
         echo "******************************************" >> "$BASE_DIR/hddmail.txt"
         echo "" >> "$BASE_DIR/hddmail.txt"
         date  >> "$BASE_DIR/hddmail.txt"
@@ -1063,7 +1063,7 @@ function writeHddmail {
 echo \#\!/bin/bash > "$BASE_DIR/hddmail"
 echo "IFS=$'\n'" >> "$BASE_DIR/hddmail"
 echo "" >> "$BASE_DIR/hddmail"
-echo ": '	HDDMAIL v.1.2 by admiral-vulcan
+echo ": '	HDDMAIL v.1.3 by admiral-vulcan
  2020" >> "$BASE_DIR/hddmail"
 echo "" >> "$BASE_DIR/hddmail"
 echo "	Changelog:" >> "$BASE_DIR/hddmail"
