@@ -25,15 +25,26 @@ option=$1
 option=${option,,}
 opttwo=$2
 
-status_store_path="/bin/hddmailFiles/hddsmart_status.json"
-status_store_dir="$(dirname "$status_store_path")"
-if [[ ! -d $status_store_dir ]]
-then
-        mkdir -p "$status_store_dir"
+readonly BASE_DIR="/opt/hddmailFiles"
+readonly EXEC_PATH="$BASE_DIR/hddexec"
+readonly CFG_PATH="$BASE_DIR/hddmail.cfg"
+readonly STATUS_STORE_PATH="$BASE_DIR/hddsmart_status.json"
+
+if [[ -d /bin/hddmailFiles && ! -d "$BASE_DIR" ]]; then
+        echo "Migrating old /bin/hddmailFiles to $BASE_DIR..."
+        mkdir -p "$BASE_DIR"
+        mv /bin/hddmailFiles/* "$BASE_DIR"/ 2>/dev/null || true
+        rm -rf /bin/hddmailFiles
 fi
-if [[ -f $status_store_path ]]
+
+if [[ ! -d "$BASE_DIR" ]]
 then
-        if ! python3 - "$status_store_path" <<'PY' >/dev/null 2>&1
+        mkdir -p "$BASE_DIR"
+fi
+
+if [[ -f "$STATUS_STORE_PATH" ]]
+then
+        if ! python3 - "$STATUS_STORE_PATH" <<'PY' >/dev/null 2>&1
 import json
 import sys
 from pathlib import Path
@@ -53,10 +64,10 @@ if not isinstance(data, dict):
         sys.exit(1)
 PY
         then
-                echo "{}" > "$status_store_path"
+                echo "{}" > "$STATUS_STORE_PATH"
         fi
 else
-        echo "{}" > "$status_store_path"
+        echo "{}" > "$STATUS_STORE_PATH"
 fi
 
 function chkoption {
@@ -91,7 +102,7 @@ function chkoption {
 }
 
 function chkhome {
-	if [ ! -e /bin/hddmailFiles/hddexec ] #installation executes HERE
+        if [ ! -e "$EXEC_PATH" ] #installation executes HERE
 	then
 		echo ""
 		echo "******************************************"
@@ -99,39 +110,52 @@ function chkhome {
   auto install"
 		echo "******************************************"
 		echo ""
-		writeHddmail
-		date > /bin/hddmailFiles/install.log
-		echo "Created program directory /bin/hddmailFiles/ and install.log" >> /bin/hddmailFiles/install.log
-		mv "$(readlink -f $0)" /bin/hddmailFiles/hddexec >> /bin/hddmailFiles/install.log
-		echo "Moved program file hddmail to program directory." >> /bin/hddmailFiles/install.log
-		
-		if [ -e /bin/hddmail ]
-		then
-			rm /bin/hddmail
-		fi
-		
-		ln -s /bin/hddmailFiles/hddmail /bin/hddmail >> /bin/hddmailFiles/install.log
-		
-		chmod -R 6777 /bin/hddmailFiles
-		
-		echo "Created hddmail symlink in /bin/" >> /bin/hddmailFiles/install.log
-		
-		complete -W '-h --help --sendmail --weekly --daily --config --viewcfg --status --summary' hddmail
-		echo "Created tab completion entry via complete" >> /bin/hddmailFiles/install.log
-		
-		echo "HDDMAIL has been installed." >> /bin/hddmailFiles/install.log
-		echo "HDDMAIL has been installed."
-		echo "An install log has been written in /bin/hddmailFiles/install.log"
-		echo ""
-		echo "HDDMAIL needs to be configured."
-		read -r -p "Do you wish to configure it now? [Y/n]" response
-		response=${response,,} # tolower
-		if [[ $response =~ ^(yes|y| ) ]] || [[ -z $response ]]
-		then
-			/bin/hddmailFiles/hddmail --config
-		else
-			echo ""
-			echo "You chose not to configure HDDMAIL."
+                writeHddmail
+                date > "$BASE_DIR/install.log"
+                echo "Created program directory $BASE_DIR/ and install.log" >> "$BASE_DIR/install.log"
+                mv "$(readlink -f "$0")" "$EXEC_PATH" >> "$BASE_DIR/install.log"
+                echo "Moved program file hddmail to program directory." >> "$BASE_DIR/install.log"
+
+                if [ -e /usr/local/bin/hddmail ] || [ -L /usr/local/bin/hddmail ]
+                then
+                        rm -f /usr/local/bin/hddmail
+                fi
+
+                if [ -e /bin/hddmail ] || [ -L /bin/hddmail ]
+                then
+                        rm -f /bin/hddmail
+                fi
+
+                ln -sf "$BASE_DIR/hddmail" /usr/local/bin/hddmail >> "$BASE_DIR/install.log"
+
+                echo "Created hddmail symlink in /usr/local/bin/" >> "$BASE_DIR/install.log"
+
+                complete -W '-h --help --sendmail --weekly --daily --config --viewcfg --status --summary --resetstore' hddmail
+                echo "Created tab completion entry via complete" >> "$BASE_DIR/install.log"
+
+                chmod 755 -R "$BASE_DIR"
+                if [[ -f "$STATUS_STORE_PATH" ]]
+                then
+                        chmod 644 "$STATUS_STORE_PATH"
+                fi
+                if [[ -f "$CFG_PATH" ]]
+                then
+                        chmod 600 "$CFG_PATH"
+                fi
+
+                echo "HDDMAIL has been installed." >> "$BASE_DIR/install.log"
+                echo "HDDMAIL has been installed."
+                echo "An install log has been written in $BASE_DIR/install.log"
+                echo ""
+                echo "HDDMAIL needs to be configured."
+                read -r -p "Do you wish to configure it now? [Y/n]" response
+                response=${response,,} # tolower
+                if [[ $response =~ ^(yes|y| ) ]] || [[ -z $response ]]
+                then
+                        "$BASE_DIR/hddmail" --config
+                else
+                        echo ""
+                        echo "You chose not to configure HDDMAIL."
 			echo "Enter hddmail --config for program configuration."
 			echo "Enter hddmail --help for more info."
 			echo  "Exiting."
@@ -142,24 +166,24 @@ function chkhome {
 }
 
 function chkln {
-	if [ ! -e /bin/hddmail ]
-	then
-		ln -s /bin/hddmailFiles/hddmail /bin/hddmail > /dev/null
-	fi
+        if [ ! -e /usr/local/bin/hddmail ] && [ ! -L /usr/local/bin/hddmail ]
+        then
+                ln -sf "$BASE_DIR/hddmail" /usr/local/bin/hddmail > /dev/null
+        fi
 }
 
 function chkconfig {
-	miscfg=0
-	mailerr=0
-	hdderr=0
-	if [ ! -e /bin/hddmailFiles/hddmail.cfg ]
-	then
-	miscfg=1
-	fi
-	nummail=$(grep -c "@" /bin/hddmailFiles/hddmail.cfg)
-	#numhdd=$(grep -c "/dev/sd" /bin/hddmailFiles/hddmail.cfg) #old method not working with /dev/disk/by-id
-	numhdd=$(sed "4q;d" /bin/hddmailFiles/hddmail.cfg | cut -c19-)
-	#cfgver=$(sed "0q;d" /bin/hddmailFiles/hddmail.cfg | cut -c19-)
+        miscfg=0
+        mailerr=0
+        hdderr=0
+        if [ ! -e "$CFG_PATH" ]
+        then
+        miscfg=1
+        fi
+        nummail=$(grep -E -c '^[[:space:]]*(To|From):.*@' "$CFG_PATH")
+        #numhdd=$(grep -c "/dev/sd" "$CFG_PATH") #old method not working with /dev/disk/by-id
+        numhdd=$(sed "4q;d" "$CFG_PATH" | cut -c19-)
+        #cfgver=$(sed "0q;d" "$CFG_PATH" | cut -c19-)
 	if [[ ! $nummail -eq 2 ]] 
 	then
 		mailerr=1
@@ -204,9 +228,9 @@ function chkconfig {
 }
 
 function readconfig {
-	tomailline=$(cat /bin/hddmailFiles/hddmail.cfg | grep "To")
-	frommailline=$(cat /bin/hddmailFiles/hddmail.cfg | grep "From")
-	dest=$(cat /bin/hddmailFiles/hddmail.cfg | grep "To" | cut -c5-)
+        tomailline=$(grep "To" "$CFG_PATH")
+        frommailline=$(grep "From" "$CFG_PATH")
+        dest=$(grep "To" "$CFG_PATH" | cut -c5-)
 	# got numhdd from chkconfig
 }
 
@@ -226,6 +250,7 @@ function helpmode {
 	echo "	--viewcfg	for program to print config file"
 	echo "	--status	for program to show hdd full health status"	
 	echo "	--summary	for program to show hdd summary"	
+	echo "	--resetstore	reset SMART status tracking store"	
 	echo ""
 	echo "Note: Errors are only reported if new or growing SMART issues have been detected."
 }
@@ -281,7 +306,7 @@ function configmode {
 	fi
 	
 	
-	echo "Version: $version" > /bin/hddmailFiles/hddmail.cfg
+        echo "Version: $version" > "$CFG_PATH"
 	echo ""
 	echo ""
 	echo "Done checking dependencies."
@@ -293,17 +318,17 @@ function configmode {
 	echo "(This should match your mail-program-settings)"
 	read source
 	echo ""
-	echo "To: $dest" >> /bin/hddmailFiles/hddmail.cfg
-	echo "From: $source" >> /bin/hddmailFiles/hddmail.cfg
-	cat /bin/hddmailFiles/hddmail.cfg | grep "To"
-	cat /bin/hddmailFiles/hddmail.cfg | grep "From"
+        echo "To: $dest" >> "$CFG_PATH"
+        echo "From: $source" >> "$CFG_PATH"
+        grep "To" "$CFG_PATH"
+        grep "From" "$CFG_PATH"
 	echo "Addresses saved"	
 	echo ""
 	echo "Scanning for drives . . ."
 	echo ""
 	gethdds
-	numlsblk=$(grep -c "sd" /bin/hddmailFiles/listlsblk.txt)
-	nummdadm=$(grep -c "sd" /bin/hddmailFiles/listmdadm.txt)
+        numlsblk=$(grep -c "sd" "$BASE_DIR/listlsblk.txt")
+        nummdadm=$(grep -c "sd" "$BASE_DIR/listmdadm.txt")
 	echo "Found a total of $numlsblk drives on your system of which $nummdadm are in a RAID."
 	echo ""
 	echo "Do you wish to observe all drives [A] or the ones in your RAID only [r]?"
@@ -312,30 +337,30 @@ function configmode {
 	echo "The /dev/sd* mapping may vary. Observing all drives is recomended."
 	echo "If you know that your non-RAID drives do not support SMART, choose [r]"
 	echo ""
-	echo "HDDMAIL is compatible with drive id. You can change the drives"
-	echo "to /dev/disk/by-id/*your-drive* in /bin/hddmailFiles/hddmail.cfg later."
+        echo "HDDMAIL is compatible with drive id. You can change the drives"
+        echo "to /dev/disk/by-id/*your-drive* in $CFG_PATH later."
 	echo ""
 	read -r -p "Please choose: [A/r]" response
 	response=${response,,} # tolower
 	if [[ $response =~ ^(all|a| ) ]] || [[ -z $response ]]
 	then
 		#use lsblklist
-		echo "Number of drives: $numlsblk" >> /bin/hddmailFiles/hddmail.cfg
+                echo "Number of drives: $numlsblk" >> "$CFG_PATH"
 		i=1
 		while [[ $i -le $numlsblk ]]
 		do
-			echo "writing /dev/$(sed "${i}q;d" /bin/hddmailFiles/listlsblk.txt) to config-file."
-			echo "/dev/$(sed "${i}q;d" /bin/hddmailFiles/listlsblk.txt)" >> /bin/hddmailFiles/hddmail.cfg
+                        echo "writing /dev/$(sed "${i}q;d" "$BASE_DIR/listlsblk.txt") to config-file."
+                        echo "/dev/$(sed "${i}q;d" "$BASE_DIR/listlsblk.txt")" >> "$CFG_PATH"
 			i=$((i+1))
 		done
 	else
 		#use mdadmlist
-		echo "Number of drives: $nummdadm" >> /bin/hddmailFiles/hddmail.cfg
+                echo "Number of drives: $nummdadm" >> "$CFG_PATH"
 		i=1
 		while [[ $i -le $nummdadm ]]
 		do
-			echo "writing /dev/$(sed "${i}q;d" /bin/hddmailFiles/listmdadm.txt) to config-file."
-			echo "/dev/$(sed "${i}q;d" /bin/hddmailFiles/listmdadm.txt)" >> /bin/hddmailFiles/hddmail.cfg
+                        echo "writing /dev/$(sed "${i}q;d" "$BASE_DIR/listmdadm.txt") to config-file."
+                        echo "/dev/$(sed "${i}q;d" "$BASE_DIR/listmdadm.txt")" >> "$CFG_PATH"
 			i=$((i+1))
 		done
 	fi	
@@ -348,8 +373,8 @@ function configmode {
 		then 
 			echo "Scheduler already set." 
 		else
-			(crontab -l 2>/dev/null; echo "0 4 * * 7   /bin/hddmailFiles/hddmail --weekly > /dev/null 2>&1") | crontab -
-			(crontab -l 2>/dev/null; echo "0 4 * * 1-6 /bin/hddmailFiles/hddmail --daily  > /dev/null 2>&1") | crontab -
+			(crontab -l 2>/dev/null; echo "0 4 * * 7   $BASE_DIR/hddmail --weekly > /dev/null 2>&1") | crontab -
+			(crontab -l 2>/dev/null; echo "0 4 * * 1-6 $BASE_DIR/hddmail --daily  > /dev/null 2>&1") | crontab -
 			echo 'The scheduler is set to daily silent scans at 4 AM and a weekly status report every Sunday.'
 			echo 'You can change this by editing your contab via \"crontab -e\".'
 		fi
@@ -357,7 +382,15 @@ function configmode {
 		echo "You can manually set it via crontab -e."
 	fi
 	
-	chmod -R 6777 /bin/hddmailFiles
+        chmod 755 -R "$BASE_DIR"
+        if [[ -f "$STATUS_STORE_PATH" ]]
+        then
+                chmod 644 "$STATUS_STORE_PATH"
+        fi
+        if [[ -f "$CFG_PATH" ]]
+        then
+                chmod 600 "$CFG_PATH"
+        fi
 	
 	echo ""
 
@@ -366,9 +399,9 @@ function configmode {
 }
 
 function viewcfgmode {
-	if [ ! -e /bin/hddmailFiles/hddmail.cfg ]
-	then
-		echo ""
+        if [ ! -e "$CFG_PATH" ]
+        then
+                echo ""
 		echo "******************************************"
 		echo "HDDMAIL v.1.2 by admiral-vulcan
   error"
@@ -385,7 +418,7 @@ function viewcfgmode {
 		echo "******************************************"
 		echo ""
 
-		cat /bin/hddmailFiles/hddmail.cfg
+                cat "$CFG_PATH"
 		echo ""
 		echo "Exiting."
 		exit 0
@@ -393,20 +426,30 @@ function viewcfgmode {
 	fi
 }
 
+function resetstore {
+        echo "{}" > "$STATUS_STORE_PATH"
+        chmod 644 "$STATUS_STORE_PATH"
+        echo "SMART status store has been reset."
+}
+
 function modejumper {
-	if [[ $option == "--help" ]]
-	then
-		helpmode
-		exit 0
-	elif [[ $option == "--config" ]]
-	then
-		configmode
-		exit 0
-	elif [[ $option == "--viewcfg" ]]
-	then
-		viewcfgmode
-		exit 0
-	fi
+        if [[ $option == "--help" ]]
+        then
+                helpmode
+                exit 0
+        elif [[ $option == "--config" ]]
+        then
+                configmode
+                exit 0
+        elif [[ $option == "--viewcfg" ]]
+        then
+                viewcfgmode
+                exit 0
+        elif [[ $option == "--resetstore" ]]
+        then
+                resetstore
+                exit 0
+        fi
 }
 
 function domagic {
@@ -418,22 +461,27 @@ function domagic {
         echo "Reading SMART values. Please wait."
         echo ""
 
-        echo "" > /bin/hddmailFiles/hddsummary.txt
-        echo "" > /bin/hddmailFiles/hddstatus.txt
+        echo "" > "$BASE_DIR/hddsummary.txt"
+        echo "" > "$BASE_DIR/hddstatus.txt"
 
         issue_devices=0
 
         COUNTER=0
         while [[  $COUNTER -lt $numhdd ]]
         do
-                currenthdd="$(sed "$((COUNTER+5))q;d" /bin/hddmailFiles/hddmail.cfg)"
+                currenthdd="$(sed "$((COUNTER+5))q;d" "$CFG_PATH")"
                 smart_tmp="$(mktemp)"
                 smart_err="$(mktemp)"
 
                 if /usr/sbin/smartctl -j "$currenthdd" > "$smart_tmp" 2> "$smart_err"
                 then
+                        # Python SMART exit codes:
+                        # 0 = OK
+                        # 1 = existing issue (already known)
+                        # 2 = new issue detected
+                        # 3 = parsing or runtime error
                         python3 - "$currenthdd" "$smart_tmp" \
-                                /bin/hddmailFiles/hddsummary.txt /bin/hddmailFiles/hddstatus.txt "$status_store_path" <<'PY'
+                                "$BASE_DIR/hddsummary.txt" "$BASE_DIR/hddstatus.txt" "$STATUS_STORE_PATH" <<'PY'
 import json
 import sys
 import time
@@ -687,26 +735,30 @@ PY
                         then
                                 issue_devices=$((issue_devices+1))
                                 errorfound=1
+                                logger -t hddmail "SMART error detected on $currenthdd"
                         elif [[ $py_status -eq 1 ]]
                         then
                                 issue_devices=$((issue_devices+1))
+                                logger -t hddmail "SMART error detected on $currenthdd"
                         elif [[ $py_status -ne 0 ]]
                         then
                                 errorfound=1
                                 issue_devices=$((issue_devices+1))
-                                echo "Status of $currenthdd:" >> /bin/hddmailFiles/hddstatus.txt
-                                echo "  - SMART data parsing failed." >> /bin/hddmailFiles/hddstatus.txt
-                                echo "" >> /bin/hddmailFiles/hddstatus.txt
+                                logger -t hddmail "SMART error detected on $currenthdd"
+                                echo "Status of $currenthdd:" >> "$BASE_DIR/hddstatus.txt"
+                                echo "  - SMART data parsing failed." >> "$BASE_DIR/hddstatus.txt"
+                                echo "" >> "$BASE_DIR/hddstatus.txt"
                         fi
                 else
-                        echo "Summary of $currenthdd:" >> /bin/hddmailFiles/hddsummary.txt
-                        echo "  - SMART data could not be retrieved." >> /bin/hddmailFiles/hddsummary.txt
-                        echo "" >> /bin/hddmailFiles/hddsummary.txt
+                        logger -t hddmail "SMART error detected on $currenthdd"
+                        echo "Summary of $currenthdd:" >> "$BASE_DIR/hddsummary.txt"
+                        echo "  - SMART data could not be retrieved." >> "$BASE_DIR/hddsummary.txt"
+                        echo "" >> "$BASE_DIR/hddsummary.txt"
 
-                        echo "Status of $currenthdd:" >> /bin/hddmailFiles/hddstatus.txt
-                        echo "  - smartctl returned an error:" >> /bin/hddmailFiles/hddstatus.txt
-                        sed 's/^/    /' "$smart_err" >> /bin/hddmailFiles/hddstatus.txt
-                        echo "" >> /bin/hddmailFiles/hddstatus.txt
+                        echo "Status of $currenthdd:" >> "$BASE_DIR/hddstatus.txt"
+                        echo "  - smartctl returned an error:" >> "$BASE_DIR/hddstatus.txt"
+                        sed 's/^/    /' "$smart_err" >> "$BASE_DIR/hddstatus.txt"
+                        echo "" >> "$BASE_DIR/hddstatus.txt"
                         errorfound=1
                         issue_devices=$((issue_devices+1))
                 fi
@@ -715,15 +767,15 @@ PY
                 let COUNTER=COUNTER+1
         done
 
-        echo "Structured summary stored in /bin/hddmailFiles/hddsummary.txt"
-        echo "Structured status stored in /bin/hddmailFiles/hddstatus.txt"
+        echo "Structured summary stored in $BASE_DIR/hddsummary.txt"
+        echo "Structured status stored in $BASE_DIR/hddstatus.txt"
         echo ""
 }
 
 function makemail {
 
-        echo "$tomailline" > /bin/hddmailFiles/hddmailhead.txt
-        echo "$frommailline" >> /bin/hddmailFiles/hddmailhead.txt
+        echo "$tomailline" > "$BASE_DIR/hddmailhead.txt"
+        echo "$frommailline" >> "$BASE_DIR/hddmailhead.txt"
 
         if [[ $issue_devices -gt 0 ]]
         then
@@ -740,59 +792,59 @@ function makemail {
                 subject="HDD SMART Status Report"
         fi
 
-        echo "Subject: $subject" >> /bin/hddmailFiles/hddmailhead.txt
-        echo "Content-Type: text/html; charset=UTF-8" >> /bin/hddmailFiles/hddmailhead.txt
-        echo "MIME-Version: 1.0" >> /bin/hddmailFiles/hddmailhead.txt
-        echo "" >> /bin/hddmailFiles/hddmailhead.txt
+        echo "Subject: $subject" >> "$BASE_DIR/hddmailhead.txt"
+        echo "Content-Type: text/html; charset=UTF-8" >> "$BASE_DIR/hddmailhead.txt"
+        echo "MIME-Version: 1.0" >> "$BASE_DIR/hddmailhead.txt"
+        echo "" >> "$BASE_DIR/hddmailhead.txt"
 
-        echo "<html>" >> /bin/hddmailFiles/hddmailhead.txt
-        echo "<style>" >> /bin/hddmailFiles/hddmailhead.txt
-        echo "body { font-family: Arial, sans-serif; background-color: #f5f7fa; margin: 0; padding: 16px; }" >> /bin/hddmailFiles/hddmailhead.txt
-        echo "h1, h2 { color: #003049; }" >> /bin/hddmailFiles/hddmailhead.txt
-        echo "table.smart-table { border-collapse: collapse; width: 100%; margin-bottom: 16px; }" >> /bin/hddmailFiles/hddmailhead.txt
-        echo "table.smart-table th, table.smart-table td { border: 1px solid #d0d5dd; padding: 6px 10px; text-align: left; vertical-align: top; }" >> /bin/hddmailFiles/hddmailhead.txt
-        echo "table.smart-table tr.ok { background-color: #d1e7dd; }" >> /bin/hddmailFiles/hddmailhead.txt
-        echo "table.smart-table tr.warning { background-color: #f8d7da; }" >> /bin/hddmailFiles/hddmailhead.txt
-        echo "table.smart-table tr.notice { background-color: #fff3cd; }" >> /bin/hddmailFiles/hddmailhead.txt
-        echo "pre { background-color: #ffffff; border: 1px solid #d0d5dd; padding: 12px; overflow-x: auto; }" >> /bin/hddmailFiles/hddmailhead.txt
-        echo "</style>" >> /bin/hddmailFiles/hddmailhead.txt
-        echo "<body>" >> /bin/hddmailFiles/hddmailhead.txt
+        echo "<html>" >> "$BASE_DIR/hddmailhead.txt"
+        echo "<style>" >> "$BASE_DIR/hddmailhead.txt"
+        echo "body { font-family: Arial, sans-serif; background-color: #f5f7fa; margin: 0; padding: 16px; }" >> "$BASE_DIR/hddmailhead.txt"
+        echo "h1, h2 { color: #003049; }" >> "$BASE_DIR/hddmailhead.txt"
+        echo "table.smart-table { border-collapse: collapse; width: 100%; margin-bottom: 16px; }" >> "$BASE_DIR/hddmailhead.txt"
+        echo "table.smart-table th, table.smart-table td { border: 1px solid #d0d5dd; padding: 6px 10px; text-align: left; vertical-align: top; }" >> "$BASE_DIR/hddmailhead.txt"
+        echo "table.smart-table tr.ok { background-color: #d1e7dd; }" >> "$BASE_DIR/hddmailhead.txt"
+        echo "table.smart-table tr.warning { background-color: #f8d7da; }" >> "$BASE_DIR/hddmailhead.txt"
+        echo "table.smart-table tr.notice { background-color: #fff3cd; }" >> "$BASE_DIR/hddmailhead.txt"
+        echo "pre { background-color: #ffffff; border: 1px solid #d0d5dd; padding: 12px; overflow-x: auto; }" >> "$BASE_DIR/hddmailhead.txt"
+        echo "</style>" >> "$BASE_DIR/hddmailhead.txt"
+        echo "<body>" >> "$BASE_DIR/hddmailhead.txt"
 
-        echo "******************************************" > /bin/hddmailFiles/hddmail.txt
-        echo "HDDMAIL v.1.2 by admiral-vulcan" >> /bin/hddmailFiles/hddmail.txt
-        echo "******************************************" >> /bin/hddmailFiles/hddmail.txt
-        echo "" >> /bin/hddmailFiles/hddmail.txt
-        date  >> /bin/hddmailFiles/hddmail.txt
-        echo "" >> /bin/hddmailFiles/hddmail.txt
-        echo "" >> /bin/hddmailFiles/hddmail.txt
+        echo "******************************************" > "$BASE_DIR/hddmail.txt"
+        echo "HDDMAIL v.1.2 by admiral-vulcan" >> "$BASE_DIR/hddmail.txt"
+        echo "******************************************" >> "$BASE_DIR/hddmail.txt"
+        echo "" >> "$BASE_DIR/hddmail.txt"
+        date  >> "$BASE_DIR/hddmail.txt"
+        echo "" >> "$BASE_DIR/hddmail.txt"
+        echo "" >> "$BASE_DIR/hddmail.txt"
 
         if [[ $option == "--daily" ]]
         then
-                echo "Report triggered by auto daily event." >> /bin/hddmailFiles/hddmail.txt
+                echo "Report triggered by auto daily event." >> "$BASE_DIR/hddmail.txt"
         elif [[ $option == "--weekly" ]]
         then
-                echo "Report triggered by auto weekly event." >> /bin/hddmailFiles/hddmail.txt
+                echo "Report triggered by auto weekly event." >> "$BASE_DIR/hddmail.txt"
         elif [[ $option == "--sendmail" ]]
         then
-                echo "Report triggered by manual sendmail event." >> /bin/hddmailFiles/hddmail.txt
+                echo "Report triggered by manual sendmail event." >> "$BASE_DIR/hddmail.txt"
         fi
 
         if [[ $issue_devices -gt 0 ]]
         then
-                echo "$issue_devices monitored drive(s) reported SMART warnings." >> /bin/hddmailFiles/hddmail.txt
+                echo "$issue_devices monitored drive(s) reported SMART warnings." >> "$BASE_DIR/hddmail.txt"
         elif [[ $errorfound -ne 0 ]]
         then
-                echo "SMART report contains parser errors. Please review manually." >> /bin/hddmailFiles/hddmail.txt
+                echo "SMART report contains parser errors. Please review manually." >> "$BASE_DIR/hddmail.txt"
         else
-                echo "All monitored drives reported healthy SMART status." >> /bin/hddmailFiles/hddmail.txt
+                echo "All monitored drives reported healthy SMART status." >> "$BASE_DIR/hddmail.txt"
         fi
 
-        echo "" >> /bin/hddmailFiles/hddmail.txt
-        cat /bin/hddmailFiles/hddsummary.txt >> /bin/hddmailFiles/hddmail.txt
-        echo "" >> /bin/hddmailFiles/hddmail.txt
-        cat /bin/hddmailFiles/hddstatus.txt >> /bin/hddmailFiles/hddmail.txt
+        echo "" >> "$BASE_DIR/hddmail.txt"
+        cat "$BASE_DIR/hddsummary.txt" >> "$BASE_DIR/hddmail.txt"
+        echo "" >> "$BASE_DIR/hddmail.txt"
+        cat "$BASE_DIR/hddstatus.txt" >> "$BASE_DIR/hddmail.txt"
 
-        python3 - /bin/hddmailFiles/hddsummary.txt /bin/hddmailFiles/hddstatus.txt /bin/hddmailFiles/hddmail.txt "$issue_devices" "$numhdd" /bin/hddmailFiles/hddmailbody.html <<'PY'
+        python3 - "$BASE_DIR/hddsummary.txt" "$BASE_DIR/hddstatus.txt" "$BASE_DIR/hddmail.txt" "$issue_devices" "$numhdd" "$BASE_DIR/hddmailbody.html" <<'PY'
 import html
 import sys
 from pathlib import Path
@@ -874,31 +926,32 @@ with Path(html_out).open("w", encoding="utf-8") as handle:
     handle.write(f"<pre>{text_html}</pre>\n")
 PY
 
-        cat /bin/hddmailFiles/hddmailhead.txt > /bin/hddmailFiles/hddmailsend.txt
-        cat /bin/hddmailFiles/hddmailbody.html >> /bin/hddmailFiles/hddmailsend.txt
-        echo "</body></html>" >> /bin/hddmailFiles/hddmailsend.txt
+        cat "$BASE_DIR/hddmailhead.txt" > "$BASE_DIR/hddmailsend.txt"
+        cat "$BASE_DIR/hddmailbody.html" >> "$BASE_DIR/hddmailsend.txt"
+        echo "</body></html>" >> "$BASE_DIR/hddmailsend.txt"
 
-        echo "Readable mail text has been written in /bin/hddmailFiles/hddmail.txt"
-        echo "HTML mail text has been written in /bin/hddmailFiles/hddmailsend.txt"
+        echo "Readable mail text has been written in $BASE_DIR/hddmail.txt"
+        echo "HTML mail text has been written in $BASE_DIR/hddmailsend.txt"
 }
 
 function sendmymail {
-	if ([[ $option == "--daily" ]] && [[ $errorfound == 1 ]]) || [[ $option == "--weekly" ]] || [[ $option == "--sendmail" ]]
-	then
-		sendmail $dest < /bin/hddmailFiles/hddmailsend.txt
+        if { [[ $option == "--daily" && $errorfound -eq 1 ]] || [[ $option == "--weekly" ]] || [[ $option == "--sendmail" ]]; }
+        then
+                logger -t hddmail "Sending SMART notification email"
+                sendmail "$dest" < "$BASE_DIR/hddmailsend.txt"
 
-		echo "E-Mail has been send."
-	else
-		if [[ $option == "--status" ]]
-		then
-			cat /bin/hddmailFiles/hddstatus.txt
-			echo ""
-			echo ""
-			echo ""
-			cat /bin/hddmailFiles/hddsummary.txt
+                echo "E-Mail has been send."
+        else
+                if [[ $option == "--status" ]]
+                then
+                        cat "$BASE_DIR/hddstatus.txt"
+                        echo ""
+                        echo ""
+                        echo ""
+                        cat "$BASE_DIR/hddsummary.txt"
 		elif [[ $option == "--summary" ]]
-		then
-			cat /bin/hddmailFiles/hddsummary.txt
+                then
+                        cat "$BASE_DIR/hddsummary.txt"
 		else
 			echo "No E-Mail has been send, no info displayed."
 			echo "Enter hddmail --help for more info."
@@ -949,10 +1002,10 @@ function gethdds {
 		then
 			if [[ $overwrote == 0 ]]
 			then
-				echo $hdd > /bin/hddmailFiles/listlsblk.txt
+                                echo $hdd > "$BASE_DIR/listlsblk.txt"
 				overwrote=1
 			else
-				echo $hdd >> /bin/hddmailFiles/listlsblk.txt
+                                echo $hdd >> "$BASE_DIR/listlsblk.txt"
 			fi
 			i=$((i+1))
 		elif [[ $first == 1 ]] &&  [[ ${hdd} != *"sd"* ]]
@@ -983,10 +1036,10 @@ function gethdds {
 		then
 			if [[ $overwrote == 0 ]]
 			then
-				echo $hdd > /bin/hddmailFiles/listmdadm.txt
+                                echo $hdd > "$BASE_DIR/listmdadm.txt"
 				overwrote=1
 			else
-				echo $hdd >> /bin/hddmailFiles/listmdadm.txt
+                                echo $hdd >> "$BASE_DIR/listmdadm.txt"
 			fi
 			i=$((i+1))
 		elif [[ $first == 1 ]] &&  [[ ${hdd} != *"sd"* ]]
@@ -1006,31 +1059,31 @@ function gethdds {
 
 function writeHddmail {
 
-		mkdir /bin/hddmailFiles/ > /dev/null
-echo \#\!/bin/bash > /bin/hddmailFiles/hddmail
-echo "IFS=$'\n'" >> /bin/hddmailFiles/hddmail
-echo "" >> /bin/hddmailFiles/hddmail
+                mkdir -p "$BASE_DIR" > /dev/null
+echo \#\!/bin/bash > "$BASE_DIR/hddmail"
+echo "IFS=$'\n'" >> "$BASE_DIR/hddmail"
+echo "" >> "$BASE_DIR/hddmail"
 echo ": '	HDDMAIL v.1.2 by admiral-vulcan
- 2020" >> /bin/hddmailFiles/hddmail
-echo "" >> /bin/hddmailFiles/hddmail
-echo "	Changelog:" >> /bin/hddmailFiles/hddmail
-echo "	1.1	FIXED	changed crontab." >> /bin/hddmailFiles/hddmail
-echo "	1.2	FIXED	\"Error: No error\" - error" >> /bin/hddmailFiles/hddmail
-echo "	1.2	ADDED	tab completion in bash" >> /bin/hddmailFiles/hddmail
-echo "" >> /bin/hddmailFiles/hddmail
-echo "'" >> /bin/hddmailFiles/hddmail
-echo "" >> /bin/hddmailFiles/hddmail
-echo "dupe_script=\$(ps -ef | grep \"hddexec\" | grep -v grep | wc -l)" >> /bin/hddmailFiles/hddmail
-echo "" >> /bin/hddmailFiles/hddmail
-echo "if [ \${dupe_script} -gt 3 ]" >> /bin/hddmailFiles/hddmail
-echo "then" >> /bin/hddmailFiles/hddmail
-echo "    echo -e \"HDDMAIL läuft bereits.\"" >> /bin/hddmailFiles/hddmail
-echo "    exit 0" >> /bin/hddmailFiles/hddmail
-echo "else" >> /bin/hddmailFiles/hddmail
-echo "	/bin/hddmailFiles/hddexec \"\$@\"" >> /bin/hddmailFiles/hddmail
-echo "	exit 0" >> /bin/hddmailFiles/hddmail
-echo "fi" >> /bin/hddmailFiles/hddmail
-chmod -R 6777 /bin/hddmailFiles/hddmail
+ 2020" >> "$BASE_DIR/hddmail"
+echo "" >> "$BASE_DIR/hddmail"
+echo "	Changelog:" >> "$BASE_DIR/hddmail"
+echo "	1.1	FIXED	changed crontab." >> "$BASE_DIR/hddmail"
+echo "	1.2	FIXED	\"Error: No error\" - error" >> "$BASE_DIR/hddmail"
+echo "	1.2	ADDED	tab completion in bash" >> "$BASE_DIR/hddmail"
+echo "" >> "$BASE_DIR/hddmail"
+echo "'" >> "$BASE_DIR/hddmail"
+echo "" >> "$BASE_DIR/hddmail"
+echo "dupe_script=\$(ps -ef | grep \"hddexec\" | grep -v grep | wc -l)" >> "$BASE_DIR/hddmail"
+echo "" >> "$BASE_DIR/hddmail"
+echo "if [ \${dupe_script} -gt 3 ]" >> "$BASE_DIR/hddmail"
+echo "then" >> "$BASE_DIR/hddmail"
+echo "    echo -e \"HDDMAIL läuft bereits.\"" >> "$BASE_DIR/hddmail"
+echo "    exit 0" >> "$BASE_DIR/hddmail"
+echo "else" >> "$BASE_DIR/hddmail"
+echo "	$BASE_DIR/hddexec \"\$@\"" >> "$BASE_DIR/hddmail"
+echo "	exit 0" >> "$BASE_DIR/hddmail"
+echo "fi" >> "$BASE_DIR/hddmail"
+chmod 755 "$BASE_DIR/hddmail"
 
 }
 
@@ -1038,6 +1091,10 @@ chmod -R 6777 /bin/hddmailFiles/hddmail
 
 chkhome
 chkln
+if ! complete -p hddmail >/dev/null 2>&1
+then
+        complete -W '-h --help --sendmail --weekly --daily --config --viewcfg --status --summary --resetstore' hddmail
+fi
 chkoption
 modejumper
 chkconfig
