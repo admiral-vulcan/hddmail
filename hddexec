@@ -26,6 +26,11 @@ option=${option,,}
 opttwo=$2
 
 status_store_path="/bin/hddmailFiles/hddsmart_status.json"
+status_store_dir="$(dirname "$status_store_path")"
+if [[ ! -d $status_store_dir ]]
+then
+        mkdir -p "$status_store_dir"
+fi
 if [[ -f $status_store_path ]]
 then
         if ! python3 - "$status_store_path" <<'PY' >/dev/null 2>&1
