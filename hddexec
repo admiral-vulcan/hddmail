@@ -25,6 +25,35 @@ option=$1
 option=${option,,}
 opttwo=$2
 
+status_store_path="/bin/hddmailFiles/hddsmart_status.json"
+if [[ -f $status_store_path ]]
+then
+        if ! python3 - "$status_store_path" <<'PY' >/dev/null 2>&1
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+try:
+        content = path.read_text(encoding="utf-8")
+except FileNotFoundError:
+        sys.exit(1)
+if not content.strip():
+        sys.exit(1)
+try:
+        data = json.loads(content)
+except json.JSONDecodeError:
+        sys.exit(1)
+if not isinstance(data, dict):
+        sys.exit(1)
+PY
+        then
+                echo "{}" > "$status_store_path"
+        fi
+else
+        echo "{}" > "$status_store_path"
+fi
+
 function chkoption {
 	if [[ ! $opttwo == "" ]]
 	then
@@ -192,6 +221,8 @@ function helpmode {
 	echo "	--viewcfg	for program to print config file"
 	echo "	--status	for program to show hdd full health status"	
 	echo "	--summary	for program to show hdd summary"	
+	echo ""
+	echo "Hinweis: Fehler werden nur gemeldet, wenn neue oder wachsende SMART-Probleme festgestellt wurden."
 }
 
 function configmode {
@@ -397,147 +428,262 @@ function domagic {
                 if /usr/sbin/smartctl -j "$currenthdd" > "$smart_tmp" 2> "$smart_err"
                 then
                         python3 - "$currenthdd" "$smart_tmp" \
-                                /bin/hddmailFiles/hddsummary.txt /bin/hddmailFiles/hddstatus.txt <<'PY'
+                                /bin/hddmailFiles/hddsummary.txt /bin/hddmailFiles/hddstatus.txt "$status_store_path" <<'PY'
 import json
 import sys
+import time
+from pathlib import Path
 
-drive, json_path, summary_path, status_path = sys.argv[1:5]
+DEFAULT_STATUS_LINE = "No critical SMART issues detected."
 
-with open(json_path, "r", encoding="utf-8") as handle:
-    data = json.load(handle)
 
-summary_lines = []
-status_lines = []
+def load_json(path: Path):
+    with path.open("r", encoding="utf-8") as handle:
+        return json.load(handle)
 
-smart_status = data.get("smart_status", {})
-passed = smart_status.get("passed")
-if passed is True:
-    summary_lines.append("SMART overall-health: PASSED")
-elif passed is False:
-    summary_lines.append("SMART overall-health: FAILED")
-    status_lines.append("SMART overall-health check reports FAILURE")
-else:
-    summary_lines.append("SMART overall-health: UNKNOWN")
 
-power_on = data.get("power_on_time", {})
-power_on_hours = None
-if isinstance(power_on, dict):
-    power_on_hours = power_on.get("hours")
-if isinstance(power_on_hours, (int, float)):
-    summary_lines.append(f"Power-on Hours: {int(power_on_hours)} h")
+def load_store(path: Path):
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError:
+        return {}
+    if isinstance(data, dict):
+        return data
+    return {}
 
-temperature_line = None
-temperature = data.get("temperature")
-if isinstance(temperature, dict):
-    current_temp = temperature.get("current")
-    if isinstance(current_temp, (int, float)):
-        temperature_line = f"Temperature: {current_temp} °C"
-if temperature_line is None:
+
+def dump_store(path: Path, content: dict):
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as handle:
+        json.dump(content, handle, indent=2, sort_keys=True)
+        handle.write("\n")
+    tmp_path.replace(path)
+
+
+def mark_event(events: dict, name: str, value: int):
+    events[name] = int(value)
+
+
+def main():
+    drive, json_path, summary_path, status_path, store_path = sys.argv[1:6]
+
+    data = load_json(Path(json_path))
+    summary_lines = []
+    status_lines = []
+    events = {}
+
+    smart_status = data.get("smart_status", {})
+    passed = smart_status.get("passed") if isinstance(smart_status, dict) else None
+    if passed is True:
+        summary_lines.append("SMART overall-health: PASSED")
+        mark_event(events, "smart_status_failed", 0)
+        status_state = "PASSED"
+    elif passed is False:
+        summary_lines.append("SMART overall-health: FAILED")
+        status_lines.append("SMART overall-health check reports FAILURE")
+        mark_event(events, "smart_status_failed", 1)
+        status_state = "FAILED"
+    else:
+        summary_lines.append("SMART overall-health: UNKNOWN")
+        mark_event(events, "smart_status_failed", 0)
+        status_state = "UNKNOWN"
+
+    power_on = data.get("power_on_time", {})
+    power_on_hours = None
+    if isinstance(power_on, dict):
+        power_on_hours = power_on.get("hours")
+    if isinstance(power_on_hours, (int, float)):
+        summary_lines.append(f"Power-on Hours: {int(power_on_hours)} h")
+
+    temperature_line = None
+    temperature = data.get("temperature")
+    if isinstance(temperature, dict):
+        current_temp = temperature.get("current")
+        if isinstance(current_temp, (int, float)):
+            temperature_line = f"Temperature: {int(current_temp)} °C"
+    if temperature_line is None:
+        nvme_log = data.get("nvme_smart_health_information_log")
+        if isinstance(nvme_log, dict):
+            nvme_temp = nvme_log.get("temperature")
+            if isinstance(nvme_temp, (int, float)):
+                nvme_temp_c = int(nvme_temp - 273) if nvme_temp > 200 else int(nvme_temp)
+                temperature_line = f"Temperature: {nvme_temp_c} °C"
+    if temperature_line:
+        summary_lines.append(temperature_line)
+
+    ata_error_count = data.get("ata_error_count")
+    if isinstance(ata_error_count, int):
+        mark_event(events, "ata_error_count", ata_error_count)
+        if ata_error_count > 0:
+            status_lines.append(f"ATA error count: {ata_error_count}")
+    else:
+        mark_event(events, "ata_error_count", 0)
+
+    RAW_CRITICAL = {
+        "Reallocated_Sector_Ct",
+        "Reallocated_Event_Count",
+        "Current_Pending_Sector",
+        "Offline_Uncorrectable",
+        "Reported_Uncorrect",
+        "Uncorrectable_Error_Cnt",
+        "Command_Timeout",
+        "End-to-End_Error",
+    }
+
+    udma_crc_recorded = False
+    ata_attributes = data.get("ata_smart_attributes", {})
+    attr_table = ata_attributes.get("table") if isinstance(ata_attributes, dict) else None
+    if isinstance(attr_table, list):
+        for attribute in attr_table:
+            if not isinstance(attribute, dict):
+                continue
+            name = attribute.get("name") or f"ID-{attribute.get('id')}"
+            when_failed = attribute.get("when_failed")
+            flags = attribute.get("flags") if isinstance(attribute.get("flags"), dict) else {}
+            prefailure = bool(flags.get("prefailure"))
+            thresh = attribute.get("thresh")
+            value = attribute.get("value")
+            raw = attribute.get("raw") if isinstance(attribute.get("raw"), dict) else {}
+            raw_value = raw.get("value")
+
+            if when_failed and when_failed != "-":
+                status_lines.append(f"{name}: previously failed ({when_failed})")
+                mark_event(events, f"attr_failed::{name}", 1)
+
+            if isinstance(thresh, int) and isinstance(value, int) and value <= thresh and prefailure:
+                status_lines.append(f"{name}: value {value} at/below threshold {thresh}")
+                mark_event(events, f"attr_threshold::{name}", int(value))
+
+            if isinstance(raw_value, int):
+                if prefailure and raw_value > 0:
+                    status_lines.append(f"{name}: raw value {raw_value}")
+                    mark_event(events, f"attr_raw::{name}", int(raw_value))
+                elif name in RAW_CRITICAL and raw_value > 0:
+                    status_lines.append(f"{name}: raw value {raw_value}")
+                    mark_event(events, f"attr_raw::{name}", int(raw_value))
+
+                if name == "UDMA_CRC_Error_Count":
+                    mark_event(events, "udma_crc_error_count", int(raw_value))
+                    udma_crc_recorded = True
+
+    if not udma_crc_recorded:
+        mark_event(events, "udma_crc_error_count", 0)
+
     nvme_log = data.get("nvme_smart_health_information_log")
     if isinstance(nvme_log, dict):
-        nvme_temp = nvme_log.get("temperature")
-        if isinstance(nvme_temp, (int, float)):
-            if nvme_temp > 200:
-                nvme_temp_c = nvme_temp - 273
+        critical_warning = nvme_log.get("critical_warning")
+        if isinstance(critical_warning, int):
+            mark_event(events, "nvme_critical_warning", critical_warning)
+            if critical_warning != 0:
+                status_lines.append(f"NVMe critical warning flags set: {critical_warning}")
+        else:
+            mark_event(events, "nvme_critical_warning", 0)
+
+        nvme_checks = {
+            "media_errors": "NVMe media errors",
+            "num_err_log_entries": "NVMe error log entries",
+            "unsafe_shutdowns": "NVMe unsafe shutdowns",
+        }
+        for key, label in nvme_checks.items():
+            value = nvme_log.get(key)
+            if isinstance(value, int):
+                mark_event(events, f"nvme_{key}", value)
+                if value > 0:
+                    status_lines.append(f"{label}: {value}")
             else:
-                nvme_temp_c = nvme_temp
-            temperature_line = f"Temperature: {int(nvme_temp_c)} °C"
-if temperature_line:
-    summary_lines.append(temperature_line)
+                mark_event(events, f"nvme_{key}", 0)
 
-ata_error_count = data.get("ata_error_count")
-if isinstance(ata_error_count, int) and ata_error_count > 0:
-    status_lines.append(f"ATA error count: {ata_error_count}")
+        spare = nvme_log.get("available_spare")
+        spare_threshold = nvme_log.get("available_spare_threshold")
+        if isinstance(spare, int) and isinstance(spare_threshold, int) and spare <= spare_threshold:
+            status_lines.append(
+                f"NVMe available spare {spare}% at/below threshold {spare_threshold}%"
+            )
+            mark_event(events, "nvme_spare_below_threshold", 1)
+        else:
+            mark_event(events, "nvme_spare_below_threshold", 0)
 
-RAW_CRITICAL = {
-    "Reallocated_Sector_Ct",
-    "Reallocated_Event_Count",
-    "Current_Pending_Sector",
-    "Offline_Uncorrectable",
-    "Reported_Uncorrect",
-    "Uncorrectable_Error_Cnt",
-    "Command_Timeout",
-    "End-to-End_Error",
-}
+        percentage_used = nvme_log.get("percentage_used")
+        if isinstance(percentage_used, int):
+            mark_event(events, "nvme_percentage_used", percentage_used)
+            if percentage_used >= 100:
+                status_lines.append(f"NVMe percentage used: {percentage_used}%")
+        else:
+            mark_event(events, "nvme_percentage_used", 0)
+    else:
+        mark_event(events, "nvme_critical_warning", 0)
+        mark_event(events, "nvme_media_errors", 0)
+        mark_event(events, "nvme_num_err_log_entries", 0)
+        mark_event(events, "nvme_unsafe_shutdowns", 0)
+        mark_event(events, "nvme_spare_below_threshold", 0)
+        mark_event(events, "nvme_percentage_used", 0)
 
-ata_attributes = data.get("ata_smart_attributes", {})
-attr_table = ata_attributes.get("table") if isinstance(ata_attributes, dict) else None
-if isinstance(attr_table, list):
-    for attribute in attr_table:
-        if not isinstance(attribute, dict):
-            continue
-        name = attribute.get("name") or f"ID-{attribute.get('id')}"
-        when_failed = attribute.get("when_failed")
-        flags = attribute.get("flags") if isinstance(attribute.get("flags"), dict) else {}
-        prefailure = flags.get("prefailure")
-        thresh = attribute.get("thresh")
-        value = attribute.get("value")
-        raw = attribute.get("raw") if isinstance(attribute.get("raw"), dict) else {}
-        raw_value = raw.get("value")
+    if not summary_lines:
+        summary_lines.append("No SMART summary information available.")
 
-        if when_failed and when_failed != "-":
-            status_lines.append(f"{name}: previously failed ({when_failed})")
+    if not status_lines:
+        status_lines.append(DEFAULT_STATUS_LINE)
 
-        if isinstance(thresh, int) and isinstance(value, int) and value <= thresh and prefailure:
-            status_lines.append(f"{name}: value {value} at/below threshold {thresh}")
+    with open(summary_path, "a", encoding="utf-8") as summary_file:
+        summary_file.write(f"Summary of {drive}:\n")
+        for line in summary_lines:
+            summary_file.write(f"  - {line}\n")
+        summary_file.write("\n")
 
-        if isinstance(raw_value, int):
-            if prefailure and raw_value > 0:
-                status_lines.append(f"{name}: raw value {raw_value}")
-            elif name in RAW_CRITICAL and raw_value > 0:
-                status_lines.append(f"{name}: raw value {raw_value}")
+    with open(status_path, "a", encoding="utf-8") as status_file:
+        status_file.write(f"Status of {drive}:\n")
+        for line in status_lines:
+            status_file.write(f"  - {line}\n")
+        status_file.write("\n")
 
-nvme_log = data.get("nvme_smart_health_information_log")
-if isinstance(nvme_log, dict):
-    critical_warning = nvme_log.get("critical_warning")
-    if isinstance(critical_warning, int) and critical_warning != 0:
-        status_lines.append(f"NVMe critical warning flags set: {critical_warning}")
+    store_path_obj = Path(store_path)
+    store = load_store(store_path_obj)
+    prev = store.get(drive, {}) if isinstance(store, dict) else {}
+    prev_events = prev.get("events", {}) if isinstance(prev, dict) else {}
 
-    nvme_checks = {
-        "media_errors": "NVMe media errors",
-        "num_err_log_entries": "NVMe error log entries",
-        "unsafe_shutdowns": "NVMe unsafe shutdowns",
+    new_issue = False
+    for name, value in events.items():
+        try:
+            previous_value = int(prev_events.get(name, 0))
+        except (TypeError, ValueError):
+            previous_value = 0
+        if int(value) > previous_value:
+            new_issue = True
+
+    store[drive] = {
+        "events": events,
+        "smart_status": status_state,
+        "updated": int(time.time()),
     }
-    for key, label in nvme_checks.items():
-        value = nvme_log.get(key)
-        if isinstance(value, int) and value > 0:
-            status_lines.append(f"{label}: {value}")
+    dump_store(store_path_obj, store)
 
-    spare = nvme_log.get("available_spare")
-    spare_threshold = nvme_log.get("available_spare_threshold")
-    if isinstance(spare, int) and isinstance(spare_threshold, int) and spare <= spare_threshold:
-        status_lines.append(
-            f"NVMe available spare {spare}% at/below threshold {spare_threshold}%"
-        )
+    has_warning = any(line != DEFAULT_STATUS_LINE for line in status_lines)
+    if has_warning:
+        return 2 if new_issue else 1
+    return 0
 
-    percentage_used = nvme_log.get("percentage_used")
-    if isinstance(percentage_used, int) and percentage_used >= 100:
-        status_lines.append(f"NVMe percentage used: {percentage_used}%")
 
-if not summary_lines:
-    summary_lines.append("No SMART summary information available.")
-
-if not status_lines:
-    status_lines.append("No critical SMART issues detected.")
-
-with open(summary_path, "a", encoding="utf-8") as summary_file:
-    summary_file.write(f"Summary of {drive}:\n")
-    for line in summary_lines:
-        summary_file.write(f"  - {line}\n")
-    summary_file.write("\n")
-
-with open(status_path, "a", encoding="utf-8") as status_file:
-    status_file.write(f"Status of {drive}:\n")
-    for line in status_lines:
-        status_file.write(f"  - {line}\n")
-    status_file.write("\n")
-
-sys.exit(1 if any(line != "No critical SMART issues detected." for line in status_lines) else 0)
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception as exc:  # pylint: disable=broad-except
+        drive = sys.argv[1]
+        status_path = sys.argv[4]
+        with open(status_path, "a", encoding="utf-8") as status_file:
+            status_file.write(f"Status of {drive}:\n")
+            status_file.write("  - SMART data parsing failed.\n")
+            status_file.write(f"    {exc}\n\n")
+        sys.exit(3)
 PY
                         py_status=$?
-                        if [[ $py_status -eq 1 ]]
+                        if [[ $py_status -eq 2 ]]
                         then
+                                issue_devices=$((issue_devices+1))
                                 errorfound=1
+                        elif [[ $py_status -eq 1 ]]
+                        then
                                 issue_devices=$((issue_devices+1))
                         elif [[ $py_status -ne 0 ]]
                         then
