@@ -374,119 +374,361 @@ function modejumper {
 }
 
 function domagic {
-	echo ""
-	echo "******************************************"
-	echo "HDDMAIL v.1.2 by admiral-vulcan
-"
-	echo "******************************************"
-	echo ""
-	echo "Reading SMART values. Please wait."
-	echo ""
-	
-	echo "" > /bin/hddmailFiles/hddsummary.txt
+        echo ""
+        echo "******************************************"
+        echo "HDDMAIL v.1.2 by admiral-vulcan"
+        echo "******************************************"
+        echo ""
+        echo "Reading SMART values. Please wait."
+        echo ""
 
-	COUNTER=0
-	while [[  $COUNTER -lt $numhdd ]]
-	do
-		currenthdd="$(sed "$((COUNTER+5))q;d" /bin/hddmailFiles/hddmail.cfg)"
-		echo "Summary of $currenthdd:" >> /bin/hddmailFiles/hddsummary.txt
-		/usr/sbin/smartctl -a $currenthdd | grep -E "Logged" >> /bin/hddmailFiles/hddsummary.txt
-		echo "" >> /bin/hddmailFiles/hddsummary.txt
-		let COUNTER=COUNTER+1
-	done
+        echo "" > /bin/hddmailFiles/hddsummary.txt
+        echo "" > /bin/hddmailFiles/hddstatus.txt
 
-	echo "" >> /bin/hddmailFiles/hddsummary.txt
+        issue_devices=0
 
-	echo "Short report stored in /bin/hddmailFiles/hddsummary.txt"
-	
-	echo "" > /bin/hddmailFiles/hddstatus.txt
-	
-	COUNTER=0
-	while [[ $COUNTER -lt $numhdd ]]
-	do
-		currenthdd="$(sed "$((COUNTER+5))q;d" /bin/hddmailFiles/hddmail.cfg)"
-		echo "Status of $currenthdd:" >> /bin/hddmailFiles/hddstatus.txt
-		echo "" >> /bin/hddmailFiles/hddstatus.txt
-		/usr/sbin/smartctl -a $currenthdd | grep -E "Offline|rror|fail" >> /bin/hddmailFiles/hddstatus.txt
-		echo "" >> /bin/hddmailFiles/hddstatus.txt
-		echo "" >> /bin/hddmailFiles/hddstatus.txt
-		let COUNTER=COUNTER+1
-	done
-	
-	echo "Full report stored in /bin/hddmailFiles/hddstatus.txt"
-	echo ""
+        COUNTER=0
+        while [[  $COUNTER -lt $numhdd ]]
+        do
+                currenthdd="$(sed "$((COUNTER+5))q;d" /bin/hddmailFiles/hddmail.cfg)"
+                smart_tmp="$(mktemp)"
+                smart_err="$(mktemp)"
+
+                if /usr/sbin/smartctl -j "$currenthdd" > "$smart_tmp" 2> "$smart_err"
+                then
+                        python3 - "$currenthdd" "$smart_tmp" \
+                                /bin/hddmailFiles/hddsummary.txt /bin/hddmailFiles/hddstatus.txt <<'PY'
+import json
+import sys
+
+drive, json_path, summary_path, status_path = sys.argv[1:5]
+
+with open(json_path, "r", encoding="utf-8") as handle:
+    data = json.load(handle)
+
+summary_lines = []
+status_lines = []
+
+smart_status = data.get("smart_status", {})
+passed = smart_status.get("passed")
+if passed is True:
+    summary_lines.append("SMART overall-health: PASSED")
+elif passed is False:
+    summary_lines.append("SMART overall-health: FAILED")
+    status_lines.append("SMART overall-health check reports FAILURE")
+else:
+    summary_lines.append("SMART overall-health: UNKNOWN")
+
+power_on = data.get("power_on_time", {})
+power_on_hours = None
+if isinstance(power_on, dict):
+    power_on_hours = power_on.get("hours")
+if isinstance(power_on_hours, (int, float)):
+    summary_lines.append(f"Power-on Hours: {int(power_on_hours)} h")
+
+temperature_line = None
+temperature = data.get("temperature")
+if isinstance(temperature, dict):
+    current_temp = temperature.get("current")
+    if isinstance(current_temp, (int, float)):
+        temperature_line = f"Temperature: {current_temp} °C"
+if temperature_line is None:
+    nvme_log = data.get("nvme_smart_health_information_log")
+    if isinstance(nvme_log, dict):
+        nvme_temp = nvme_log.get("temperature")
+        if isinstance(nvme_temp, (int, float)):
+            if nvme_temp > 200:
+                nvme_temp_c = nvme_temp - 273
+            else:
+                nvme_temp_c = nvme_temp
+            temperature_line = f"Temperature: {int(nvme_temp_c)} °C"
+if temperature_line:
+    summary_lines.append(temperature_line)
+
+ata_error_count = data.get("ata_error_count")
+if isinstance(ata_error_count, int) and ata_error_count > 0:
+    status_lines.append(f"ATA error count: {ata_error_count}")
+
+RAW_CRITICAL = {
+    "Reallocated_Sector_Ct",
+    "Reallocated_Event_Count",
+    "Current_Pending_Sector",
+    "Offline_Uncorrectable",
+    "Reported_Uncorrect",
+    "Uncorrectable_Error_Cnt",
+    "Command_Timeout",
+    "End-to-End_Error",
+}
+
+ata_attributes = data.get("ata_smart_attributes", {})
+attr_table = ata_attributes.get("table") if isinstance(ata_attributes, dict) else None
+if isinstance(attr_table, list):
+    for attribute in attr_table:
+        if not isinstance(attribute, dict):
+            continue
+        name = attribute.get("name") or f"ID-{attribute.get('id')}"
+        when_failed = attribute.get("when_failed")
+        flags = attribute.get("flags") if isinstance(attribute.get("flags"), dict) else {}
+        prefailure = flags.get("prefailure")
+        thresh = attribute.get("thresh")
+        value = attribute.get("value")
+        raw = attribute.get("raw") if isinstance(attribute.get("raw"), dict) else {}
+        raw_value = raw.get("value")
+
+        if when_failed and when_failed != "-":
+            status_lines.append(f"{name}: previously failed ({when_failed})")
+
+        if isinstance(thresh, int) and isinstance(value, int) and value <= thresh and prefailure:
+            status_lines.append(f"{name}: value {value} at/below threshold {thresh}")
+
+        if isinstance(raw_value, int):
+            if prefailure and raw_value > 0:
+                status_lines.append(f"{name}: raw value {raw_value}")
+            elif name in RAW_CRITICAL and raw_value > 0:
+                status_lines.append(f"{name}: raw value {raw_value}")
+
+nvme_log = data.get("nvme_smart_health_information_log")
+if isinstance(nvme_log, dict):
+    critical_warning = nvme_log.get("critical_warning")
+    if isinstance(critical_warning, int) and critical_warning != 0:
+        status_lines.append(f"NVMe critical warning flags set: {critical_warning}")
+
+    nvme_checks = {
+        "media_errors": "NVMe media errors",
+        "num_err_log_entries": "NVMe error log entries",
+        "unsafe_shutdowns": "NVMe unsafe shutdowns",
+    }
+    for key, label in nvme_checks.items():
+        value = nvme_log.get(key)
+        if isinstance(value, int) and value > 0:
+            status_lines.append(f"{label}: {value}")
+
+    spare = nvme_log.get("available_spare")
+    spare_threshold = nvme_log.get("available_spare_threshold")
+    if isinstance(spare, int) and isinstance(spare_threshold, int) and spare <= spare_threshold:
+        status_lines.append(
+            f"NVMe available spare {spare}% at/below threshold {spare_threshold}%"
+        )
+
+    percentage_used = nvme_log.get("percentage_used")
+    if isinstance(percentage_used, int) and percentage_used >= 100:
+        status_lines.append(f"NVMe percentage used: {percentage_used}%")
+
+if not summary_lines:
+    summary_lines.append("No SMART summary information available.")
+
+if not status_lines:
+    status_lines.append("No critical SMART issues detected.")
+
+with open(summary_path, "a", encoding="utf-8") as summary_file:
+    summary_file.write(f"Summary of {drive}:\n")
+    for line in summary_lines:
+        summary_file.write(f"  - {line}\n")
+    summary_file.write("\n")
+
+with open(status_path, "a", encoding="utf-8") as status_file:
+    status_file.write(f"Status of {drive}:\n")
+    for line in status_lines:
+        status_file.write(f"  - {line}\n")
+    status_file.write("\n")
+
+sys.exit(1 if any(line != "No critical SMART issues detected." for line in status_lines) else 0)
+PY
+                        py_status=$?
+                        if [[ $py_status -eq 1 ]]
+                        then
+                                errorfound=1
+                                issue_devices=$((issue_devices+1))
+                        elif [[ $py_status -ne 0 ]]
+                        then
+                                errorfound=1
+                                issue_devices=$((issue_devices+1))
+                                echo "Status of $currenthdd:" >> /bin/hddmailFiles/hddstatus.txt
+                                echo "  - SMART data parsing failed." >> /bin/hddmailFiles/hddstatus.txt
+                                echo "" >> /bin/hddmailFiles/hddstatus.txt
+                        fi
+                else
+                        echo "Summary of $currenthdd:" >> /bin/hddmailFiles/hddsummary.txt
+                        echo "  - SMART data could not be retrieved." >> /bin/hddmailFiles/hddsummary.txt
+                        echo "" >> /bin/hddmailFiles/hddsummary.txt
+
+                        echo "Status of $currenthdd:" >> /bin/hddmailFiles/hddstatus.txt
+                        echo "  - smartctl returned an error:" >> /bin/hddmailFiles/hddstatus.txt
+                        sed 's/^/    /' "$smart_err" >> /bin/hddmailFiles/hddstatus.txt
+                        echo "" >> /bin/hddmailFiles/hddstatus.txt
+                        errorfound=1
+                        issue_devices=$((issue_devices+1))
+                fi
+
+                rm -f "$smart_tmp" "$smart_err"
+                let COUNTER=COUNTER+1
+        done
+
+        echo "Structured summary stored in /bin/hddmailFiles/hddsummary.txt"
+        echo "Structured status stored in /bin/hddmailFiles/hddstatus.txt"
+        echo ""
 }
 
 function makemail {
 
-	echo "$tomailline" > /bin/hddmailFiles/hddmailhead.txt
-	echo "$frommailline" >> /bin/hddmailFiles/hddmailhead.txt
-	if [[ $(grep -c "No Errors Logged" /bin/hddmailFiles/hddstatus.txt) == $numhdd ]]
-	then
-		echo "Subject: HDD SMART Status Report" >> /bin/hddmailFiles/hddmailhead.txt
-	else
-	errorfound=1
-		echo "Subject: HDD SMART ERROR DETECTED" >> /bin/hddmailFiles/hddmailhead.txt
-	fi
-	echo "Content-Type: text/html" >> /bin/hddmailFiles/hddmailhead.txt
-	echo "MIME-Version: 1.0" >> /bin/hddmailFiles/hddmailhead.txt
-	echo "" >> /bin/hddmailFiles/hddmailhead.txt
+        echo "$tomailline" > /bin/hddmailFiles/hddmailhead.txt
+        echo "$frommailline" >> /bin/hddmailFiles/hddmailhead.txt
 
-	echo "<html>" >> /bin/hddmailFiles/hddmailhead.txt
-	
-	echo "<style>" >> /bin/hddmailFiles/hddmailhead.txt
-	echo "html *" >> /bin/hddmailFiles/hddmailhead.txt
-	echo "{" >> /bin/hddmailFiles/hddmailhead.txt
-	echo "   font-size: 1em !important;" >> /bin/hddmailFiles/hddmailhead.txt
-	echo "   background-color: powderblue; !important;" >> /bin/hddmailFiles/hddmailhead.txt
-	echo "   font-family: Courier, monospace !important;" >> /bin/hddmailFiles/hddmailhead.txt
-	echo "}" >> /bin/hddmailFiles/hddmailhead.txt
-	#echo "body {background-color: powderblue;}" >> /bin/hddmailFiles/hddmailhead.txt
-	echo "</style>" >> /bin/hddmailFiles/hddmailhead.txt
-	echo "<body><table style=\"font-family:Courier, monospace\">" >> /bin/hddmailFiles/hddmailhead.txt
-	
-	#insert style here
-	
-	echo "******************************************" > /bin/hddmailFiles/hddmail.txt
-	echo "HDDMAIL v.1.2 by admiral-vulcan
-" >> /bin/hddmailFiles/hddmail.txt
-	echo "******************************************" >> /bin/hddmailFiles/hddmail.txt
-	echo "" >> /bin/hddmailFiles/hddmail.txt
-	date  >> /bin/hddmailFiles/hddmail.txt
-	echo "" >> /bin/hddmailFiles/hddmail.txt
-	echo "" >> /bin/hddmailFiles/hddmail.txt
-	
-	if [[ $option == "--daily" ]] 
-	then
-		echo "Report triggert by auto daily event." >> /bin/hddmailFiles/hddmail.txt
-		echo "" >> /bin/hddmailFiles/hddmail.txt
-		echo "" >> /bin/hddmailFiles/hddmail.txt
-	elif [[ $option == "--weekly" ]] 
-	then
-		echo "Report triggert by auto weekly event." >> /bin/hddmailFiles/hddmail.txt
-		echo "" >> /bin/hddmailFiles/hddmail.txt
-		echo "" >> /bin/hddmailFiles/hddmail.txt
-	elif [[ $option == "--sendmail" ]]
-	then
-		echo "Report triggert by manual sendmail event." >> /bin/hddmailFiles/hddmail.txt
-		echo "" >> /bin/hddmailFiles/hddmail.txt
-		echo "" >> /bin/hddmailFiles/hddmail.txt
-	fi
-	
-	cat /bin/hddmailFiles/hddsummary.txt >> /bin/hddmailFiles/hddmail.txt
+        if [[ $issue_devices -gt 0 ]]
+        then
+                if [[ $issue_devices -eq 1 ]]
+                then
+                        subject="HDD SMART WARNUNG (1 Laufwerk betroffen)"
+                else
+                        subject="HDD SMART WARNUNG ($issue_devices Laufwerke betroffen)"
+                fi
+        elif [[ $errorfound -ne 0 ]]
+        then
+                subject="HDD SMART WARNUNG (Analysefehler)"
+        else
+                subject="HDD SMART Status Report"
+        fi
 
-	echo "" >> /bin/hddmailFiles/hddmail.txt
-	echo "" >> /bin/hddmailFiles/hddmail.txt
+        echo "Subject: $subject" >> /bin/hddmailFiles/hddmailhead.txt
+        echo "Content-Type: text/html; charset=UTF-8" >> /bin/hddmailFiles/hddmailhead.txt
+        echo "MIME-Version: 1.0" >> /bin/hddmailFiles/hddmailhead.txt
+        echo "" >> /bin/hddmailFiles/hddmailhead.txt
 
-	cat /bin/hddmailFiles/hddstatus.txt >> /bin/hddmailFiles/hddmail.txt
-	
-	sed 's/.*/&<br>/' /bin/hddmailFiles/hddmail.txt > /bin/hddmailFiles/hddtmp.txt
-	cat /bin/hddmailFiles/hddmailhead.txt > /bin/hddmailFiles/hddmailsend.txt
-	cat /bin/hddmailFiles/hddtmp.txt >> /bin/hddmailFiles/hddmailsend.txt
-	echo "</table></body></html>" >> /bin/hddmailFiles/hddmailsend.txt
-	
-	echo "Readable mail text has been written in /bin/hddmailFiles/hddmail.txt"
-	echo "HTML mail text has been written in /bin/hddmailFiles/hddmailsend.txt"
+        echo "<html>" >> /bin/hddmailFiles/hddmailhead.txt
+        echo "<style>" >> /bin/hddmailFiles/hddmailhead.txt
+        echo "body { font-family: Arial, sans-serif; background-color: #f5f7fa; margin: 0; padding: 16px; }" >> /bin/hddmailFiles/hddmailhead.txt
+        echo "h1, h2 { color: #003049; }" >> /bin/hddmailFiles/hddmailhead.txt
+        echo "table.smart-table { border-collapse: collapse; width: 100%; margin-bottom: 16px; }" >> /bin/hddmailFiles/hddmailhead.txt
+        echo "table.smart-table th, table.smart-table td { border: 1px solid #d0d5dd; padding: 6px 10px; text-align: left; vertical-align: top; }" >> /bin/hddmailFiles/hddmailhead.txt
+        echo "table.smart-table tr.ok { background-color: #d1e7dd; }" >> /bin/hddmailFiles/hddmailhead.txt
+        echo "table.smart-table tr.warning { background-color: #f8d7da; }" >> /bin/hddmailFiles/hddmailhead.txt
+        echo "table.smart-table tr.notice { background-color: #fff3cd; }" >> /bin/hddmailFiles/hddmailhead.txt
+        echo "pre { background-color: #ffffff; border: 1px solid #d0d5dd; padding: 12px; overflow-x: auto; }" >> /bin/hddmailFiles/hddmailhead.txt
+        echo "</style>" >> /bin/hddmailFiles/hddmailhead.txt
+        echo "<body>" >> /bin/hddmailFiles/hddmailhead.txt
+
+        echo "******************************************" > /bin/hddmailFiles/hddmail.txt
+        echo "HDDMAIL v.1.2 by admiral-vulcan" >> /bin/hddmailFiles/hddmail.txt
+        echo "******************************************" >> /bin/hddmailFiles/hddmail.txt
+        echo "" >> /bin/hddmailFiles/hddmail.txt
+        date  >> /bin/hddmailFiles/hddmail.txt
+        echo "" >> /bin/hddmailFiles/hddmail.txt
+        echo "" >> /bin/hddmailFiles/hddmail.txt
+
+        if [[ $option == "--daily" ]]
+        then
+                echo "Report triggered by auto daily event." >> /bin/hddmailFiles/hddmail.txt
+        elif [[ $option == "--weekly" ]]
+        then
+                echo "Report triggered by auto weekly event." >> /bin/hddmailFiles/hddmail.txt
+        elif [[ $option == "--sendmail" ]]
+        then
+                echo "Report triggered by manual sendmail event." >> /bin/hddmailFiles/hddmail.txt
+        fi
+
+        if [[ $issue_devices -gt 0 ]]
+        then
+                echo "$issue_devices monitored drive(s) reported SMART warnings." >> /bin/hddmailFiles/hddmail.txt
+        elif [[ $errorfound -ne 0 ]]
+        then
+                echo "SMART report contains parser errors. Please review manually." >> /bin/hddmailFiles/hddmail.txt
+        else
+                echo "All monitored drives reported healthy SMART status." >> /bin/hddmailFiles/hddmail.txt
+        fi
+
+        echo "" >> /bin/hddmailFiles/hddmail.txt
+        cat /bin/hddmailFiles/hddsummary.txt >> /bin/hddmailFiles/hddmail.txt
+        echo "" >> /bin/hddmailFiles/hddmail.txt
+        cat /bin/hddmailFiles/hddstatus.txt >> /bin/hddmailFiles/hddmail.txt
+
+        python3 - /bin/hddmailFiles/hddsummary.txt /bin/hddmailFiles/hddstatus.txt /bin/hddmailFiles/hddmail.txt "$issue_devices" "$numhdd" /bin/hddmailFiles/hddmailbody.html <<'PY'
+import html
+import sys
+from pathlib import Path
+
+summary_path, status_path, text_path, issues_raw, total_raw, html_out = sys.argv[1:7]
+
+issues_count = int(issues_raw)
+try:
+    total_devices = int(total_raw)
+except ValueError:
+    total_devices = 0
+
+def parse_sections(path: Path, prefix: str):
+    sections = {}
+    current = None
+    if not path.exists():
+        return sections
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.startswith(prefix):
+            current = line[len(prefix):].strip()
+            sections[current] = []
+        elif line.startswith("  -") and current is not None:
+            sections.setdefault(current, []).append(line[4:])
+    return sections
+
+summary_sections = parse_sections(Path(summary_path), "Summary of ")
+status_sections = parse_sections(Path(status_path), "Status of ")
+all_devices = sorted(set(summary_sections) | set(status_sections))
+
+rows = []
+problematic_devices = 0
+for device in all_devices:
+    summary_lines = summary_sections.get(device, [])
+    status_lines = status_sections.get(device, [])
+    if not status_lines:
+        row_class = "notice"
+    elif any(line != "No critical SMART issues detected." for line in status_lines):
+        row_class = "warning"
+        problematic_devices += 1
+    else:
+        row_class = "ok"
+    summary_html = "<br>".join(html.escape(line) for line in summary_lines) if summary_lines else "&ndash;"
+    status_html = "<br>".join(html.escape(line) for line in status_lines) if status_lines else "Keine Daten verfügbar"
+    rows.append((row_class, html.escape(device), summary_html, status_html))
+
+if not all_devices:
+    total_devices = max(total_devices, 0)
+    problematic_devices = issues_count
+else:
+    total_devices = len(all_devices)
+    if issues_count and issues_count > problematic_devices:
+        problematic_devices = issues_count
+
+text_content = Path(text_path).read_text(encoding="utf-8")
+text_html = html.escape(text_content)
+
+with Path(html_out).open("w", encoding="utf-8") as handle:
+    handle.write("<h1>SMART-Auswertung</h1>\n")
+    if total_devices:
+        handle.write(
+            f"<p>Betroffene Laufwerke: {problematic_devices} von {total_devices}</p>\n"
+        )
+    else:
+        handle.write(
+            f"<p>Betroffene Laufwerke: {problematic_devices}</p>\n"
+        )
+    handle.write("<table class=\"smart-table\">\n")
+    handle.write("  <thead><tr><th>Laufwerk</th><th>Zusammenfassung</th><th>SMART-Warnungen</th></tr></thead>\n")
+    handle.write("  <tbody>\n")
+    if rows:
+        for row_class, device, summary_html, status_html in rows:
+            handle.write(
+                f"    <tr class=\"{row_class}\"><td>{device}</td><td>{summary_html}</td><td>{status_html}</td></tr>\n"
+            )
+    else:
+        handle.write("    <tr class=\"notice\"><td colspan=\"3\">Keine SMART-Daten verfügbar.</td></tr>\n")
+    handle.write("  </tbody>\n</table>\n")
+    handle.write("<h2>Detailauswertung (Text)</h2>\n")
+    handle.write(f"<pre>{text_html}</pre>\n")
+PY
+
+        cat /bin/hddmailFiles/hddmailhead.txt > /bin/hddmailFiles/hddmailsend.txt
+        cat /bin/hddmailFiles/hddmailbody.html >> /bin/hddmailFiles/hddmailsend.txt
+        echo "</body></html>" >> /bin/hddmailFiles/hddmailsend.txt
+
+        echo "Readable mail text has been written in /bin/hddmailFiles/hddmail.txt"
+        echo "HTML mail text has been written in /bin/hddmailFiles/hddmailsend.txt"
 }
 
 function sendmymail {
