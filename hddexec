@@ -84,7 +84,7 @@ function chkoption {
 	fi
 
 
-	if [[ ! ($option == "" || $option == "-h" || $option == "--help" || $option == "--daily" || $option == "--weekly" || $option == "--config" || $option == "--status" || $option == "--summary" || $option == "--sendmail" || $option == "--viewcfg") ]]
+        if [[ ! ($option == "" || $option == "-h" || $option == "--help" || $option == "--daily" || $option == "--weekly" || $option == "--config" || $option == "--status" || $option == "--summary" || $option == "--sendmail" || $option == "--viewcfg" || $option == "--resetstore") ]]
 	then
 		echo "******************************************"
 		echo "HDDMAIL v.1.3 by admiral-vulcan
